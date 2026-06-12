@@ -1,0 +1,27 @@
+{{template "head" .}}
+<div class="pagehead">
+  <h1>Bridges</h1>
+  <a class="btn" href="/bridges/new">+ New bridge</a>
+</div>
+{{if not .Rows}}
+<div class="empty">No bridges yet. Create one to start mirroring a repository with excluded paths filtered out of its entire history.</div>
+{{else}}
+<table>
+  <tr><th>bridge</th><th>status</th><th>last sync</th><th>last verified</th>
+      <th>open agent PRs</th><th>awaiting merge</th><th>needs attention</th></tr>
+  {{range .Rows}}
+  <tr>
+    <td><a href="/bridges/{{.Bridge.Slug}}"><strong>{{.Bridge.Name}}</strong></a> <span class="muted">{{.Bridge.Slug}}</span></td>
+    <td>{{template "badge" .Bridge.Status}}</td>
+    <td>{{timefmt .Bridge.LastSyncAt}}
+        {{if .Bridge.LastSyncOK}}{{if not (deref .Bridge.LastSyncOK)}}<span class="badge badge-failed">failed</span>{{end}}{{end}}</td>
+    <td>{{timefmt .Bridge.LastVerifiedAt}}
+        {{if .Bridge.LastVerifyOK}}{{if deref .Bridge.LastVerifyOK}}<span class="badge badge-success">clean</span>{{else}}<span class="badge badge-failed">LEAK</span>{{end}}{{end}}</td>
+    <td>{{if .OpenPRsErr}}<span class="muted" title="{{.OpenPRsErr}}">?</span>{{else}}{{.OpenPRs}}{{end}}</td>
+    <td>{{.AwaitingMerge}}</td>
+    <td>{{if gt .NeedsAttention 0}}<span class="badge badge-needs_attention">{{.NeedsAttention}}</span>{{else}}0{{end}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+{{template "foot" .}}

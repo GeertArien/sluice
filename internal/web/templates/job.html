@@ -1,0 +1,23 @@
+{{template "head" .}}
+{{$j := .Job}}
+<h1>Job #{{$j.ID}} — {{$j.Kind}} {{template "badge" $j.Status}}</h1>
+{{if .Bridge}}<p><a href="/bridges/{{.Bridge.Slug}}">&larr; back to {{.Bridge.Name}}</a></p>{{end}}
+<table class="kv">
+  <tr><th>queued</th><td>{{$j.CreatedAt.Local.Format "2006-01-02 15:04:05"}}</td></tr>
+  <tr><th>started</th><td>{{timefmt $j.StartedAt}}</td></tr>
+  <tr><th>finished</th><td>{{timefmt $j.FinishedAt}}</td></tr>
+  {{if and $j.StartedAt $j.FinishedAt}}<tr><th>duration</th><td>{{dur $j.StartedAt $j.FinishedAt}}</td></tr>{{end}}
+  {{if $j.ErrorSummary}}<tr><th>error</th><td class="errtext">{{$j.ErrorSummary}}</td></tr>{{end}}
+  {{if ne $j.Payload "{}"}}<tr><th>payload</th><td><code>{{$j.Payload}}</code></td></tr>{{end}}
+</table>
+
+{{if and .CanRetry .Bridge}}
+<form method="post" action="/bridges/{{.Bridge.Slug}}/{{$j.Kind}}" class="inline mt">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button>Retry {{$j.Kind}}</button>
+</form>
+{{end}}
+
+<h2>Log</h2>
+<pre id="joblog" data-job-id="{{$j.ID}}" {{if .Running}}data-poll="1"{{end}}>{{$j.Log}}</pre>
+{{template "foot" .}}

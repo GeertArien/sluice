@@ -1,0 +1,46 @@
+{{template "head" .}}
+<h1>New bridge</h1>
+<p class="muted">Creating a bridge runs the init flow: create the Gitea repo if missing,
+clone the source, run the first filtered sync, then verify that no excluded
+content leaked. The bridge stays <strong>paused</strong> until you review the
+verification result and activate it.</p>
+{{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+<form method="post" action="/bridges" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset><legend>Identity</legend>
+    <label>Name <input name="name" value="{{.Form.Get "name"}}" required></label>
+    <label>Slug <input name="slug" value="{{.Form.Get "slug"}}" pattern="[a-z0-9][a-z0-9-]+" required>
+      <small>lowercase, digits, dashes; used for the workspace dir and webhook URL</small></label>
+  </fieldset>
+  <fieldset><legend>Source repository</legend>
+    <label>Source remote URL <input name="source_remote_url" value="{{.Form.Get "source_remote_url"}}" placeholder="git@github.com:org/repo.git" required></label>
+  </fieldset>
+  <fieldset><legend>Gitea mirror</legend>
+    <label>Gitea base URL <input name="gitea_base_url" value="{{.Form.Get "gitea_base_url"}}" placeholder="https://gitea.internal" required></label>
+    <label>Owner (org or user) <input name="gitea_owner" value="{{.Form.Get "gitea_owner"}}" required></label>
+    <label>Repository name <input name="gitea_repo" value="{{.Form.Get "gitea_repo"}}" required></label>
+    <label>Gitea SSH URL <input name="gitea_ssh_url" value="{{.Form.Get "gitea_ssh_url"}}" placeholder="left empty: taken from the API after repo creation"></label>
+    <label>Gitea API token <input type="password" name="gitea_token" required>
+      <small>stored encrypted; never written to logs</small></label>
+  </fieldset>
+  <fieldset><legend>Filter</legend>
+    <label>Excluded paths (one per line) <textarea name="excluded_paths" rows="4" required placeholder="internal/secret-sauce
+docs/private">{{.Form.Get "excluded_paths"}}</textarea>
+      <small>plain relative directory paths — no globs, regex characters, leading / or ..</small></label>
+    <label>Tripwire strings (one per line, optional) <textarea name="tripwire_strings" rows="2" placeholder="PROJECT-CODENAME">{{.Form.Get "tripwire_strings"}}</textarea>
+      <small>verification fails if any of these appear anywhere in the filtered history</small></label>
+  </fieldset>
+  <fieldset><legend>Sync</legend>
+    <label>Branches (comma separated) <input name="sync_branches" value="{{.Form.Get "sync_branches"}}" placeholder="main" required></label>
+    <label>Ref globs (comma separated, optional) <input name="sync_globs" value="{{.Form.Get "sync_globs"}}" placeholder="refs/heads/release/*"></label>
+    <label>Cron schedule (optional) <input name="schedule_cron" value="{{.Form.Get "schedule_cron"}}" placeholder="*/15 * * * *"></label>
+  </fieldset>
+  <fieldset><legend>Promotion identity rewrite (optional)</legend>
+    <label>Committer/author name <input name="promote_name" value="{{.Form.Get "promote_name"}}" placeholder="AI Contributions"></label>
+    <label>Committer/author email <input name="promote_email" value="{{.Form.Get "promote_email"}}" placeholder="ai@corp.example"></label>
+    <label class="check"><input type="checkbox" name="promote_keep_trailer" checked> add Co-authored-by trailer with the original agent identity</label>
+    <label class="check"><input type="checkbox" name="promote_signoff"> add Signed-off-by on apply</label>
+  </fieldset>
+  <button type="submit">Create bridge &amp; run init</button>
+</form>
+{{template "foot" .}}

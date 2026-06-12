@@ -1,0 +1,65 @@
+:root {
+  --bg: #14171a; --panel: #1c2126; --text: #d6dde4; --muted: #7d8a96;
+  --line: #2b333b; --accent: #4ea1ff; --red: #e5534b; --green: #4cae4f;
+  --yellow: #d4a72c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, sans-serif; }
+nav { display: flex; gap: 1rem; align-items: center; padding: .5rem 1rem;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+nav a { color: var(--text); text-decoration: none; }
+nav .brand { font-weight: 700; color: var(--accent); }
+nav .spacer { flex: 1; }
+main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+main.login { max-width: 320px; margin-top: 12vh; text-align: center; }
+h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.6rem; }
+a { color: var(--accent); }
+code, .sha, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+.sha { cursor: pointer; background: var(--panel); padding: 1px 4px; border-radius: 3px; }
+.sha.copied { outline: 1px solid var(--green); }
+pre { background: #0d0f11; border: 1px solid var(--line); padding: .8rem;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+table.kv th { width: 11rem; }
+.muted { color: var(--muted); }
+.errtext { color: var(--red); }
+.badge { display: inline-block; padding: 0 .45em; border-radius: 3px;
+  font-size: .8em; font-weight: 700; text-transform: uppercase; }
+.badge-active, .badge-success, .badge-finalized, .badge-promoted { background: #173620; color: var(--green); }
+.badge-paused, .badge-queued { background: #2b333b; color: var(--muted); }
+.badge-running { background: #15293d; color: var(--accent); }
+.badge-failed, .badge-rejected, .badge-error, .badge-conflict { background: #3d1715; color: var(--red); }
+.badge-needs_attention { background: #3a2e10; color: var(--yellow); }
+.badge-landed { background: #173620; color: var(--green); }
+.banner { padding: .6rem .9rem; border-radius: 4px; margin: .8rem 0; }
+.banner-red { background: #3d1715; border: 1px solid var(--red); }
+.banner-yellow { background: #3a2e10; border: 1px solid var(--yellow); }
+.empty { color: var(--muted); padding: 1rem; border: 1px dashed var(--line);
+  border-radius: 4px; text-align: center; }
+.pagehead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+button, .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  padding: .35rem .8rem; border-radius: 4px; cursor: pointer; text-decoration: none;
+  font: inherit; display: inline-block; }
+button:hover, .btn:hover { border-color: var(--accent); }
+button.primary { background: #15406b; border-color: var(--accent); }
+button.dangerbtn { background: #3d1715; border-color: var(--red); }
+button.linklike { background: none; border: none; color: var(--text); padding: 0; }
+form.inline, .inline { display: inline-block; }
+.inline-form { display: flex; gap: .4rem; align-items: center; margin: .4rem 0; flex-wrap: wrap; }
+form.stack fieldset { border: 1px solid var(--line); border-radius: 4px; margin: 0 0 1rem; padding: .8rem 1rem; }
+form.stack legend { color: var(--muted); padding: 0 .4rem; }
+fieldset.danger, section.danger { border-color: var(--red) !important; }
+label { display: block; margin: .5rem 0; }
+label.check { display: flex; gap: .5rem; align-items: center; }
+label small { display: block; color: var(--muted); }
+input[type=text], input[type=password], input:not([type]), textarea, select {
+  width: 100%; max-width: 560px; background: #0d0f11; color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; padding: .4rem .55rem; font: inherit; }
+.inline-form input:not([type=hidden]) { width: auto; }
+textarea { font-family: ui-monospace, monospace; }
+.mt { margin-top: 1.2rem; }
+details summary { cursor: pointer; color: var(--accent); }

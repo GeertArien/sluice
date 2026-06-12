@@ -1,0 +1,26 @@
+{{template "head" .}}
+<h1>Audit log</h1>
+<form method="get" action="/audit" class="inline-form">
+  <select name="bridge">
+    <option value="">all bridges</option>
+    {{range .Bridges}}<option value="{{.Slug}}" {{if eq .Slug $.Filter}}selected{{end}}>{{.Slug}}</option>{{end}}
+  </select>
+  <input name="action" value="{{.ActionFilter}}" placeholder="action (e.g. promotion_rejected)">
+  <button>Filter</button>
+</form>
+{{if not .Entries}}<div class="empty">No audit entries.</div>
+{{else}}
+<table>
+  <tr><th>at</th><th>bridge</th><th>actor</th><th>action</th><th>details</th></tr>
+  {{range .Entries}}
+  <tr>
+    <td>{{.At.Local.Format "2006-01-02 15:04:05"}}</td>
+    <td>{{if .BridgeID}}{{index $.Names (deref_i .BridgeID)}}{{else}}—{{end}}</td>
+    <td>{{.Actor}}</td>
+    <td><code>{{.Action}}</code></td>
+    <td class="muted"><code>{{.Details}}</code></td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+{{template "foot" .}}
