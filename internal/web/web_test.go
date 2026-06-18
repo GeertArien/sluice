@@ -2,15 +2,20 @@ package web
 
 import (
 	"context"
+	"crypto/ed25519"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/geertarien/sluice/internal/gitea"
 	"github.com/geertarien/sluice/internal/jobs"
@@ -39,13 +44,22 @@ func (stubGitea) CommentOnPR(ctx context.Context, o, r string, i int64, b string
 func (stubGitea) DeleteBranch(ctx context.Context, o, r, b string) error                { return nil }
 
 func setup(t *testing.T) (*httptest.Server, *http.Client, *store.Store) {
+	ts, client, st, _ := setupKH(t)
+	return ts, client, st
+}
+
+// setupKH also returns the managed known_hosts path for tests that exercise
+// trusted-host management.
+func setupKH(t *testing.T) (*httptest.Server, *http.Client, *store.Store, string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	box, _ := secrets.New(strings.Repeat("ef", 32))
-	svc := jobs.New(st, box, t.TempDir(), "", 1)
+	knownHosts := filepath.Join(dir, "known_hosts")
+	svc := jobs.New(st, box, dir, knownHosts, 1)
 	svc.NewGitea = func(string, string) jobs.GiteaAPI { return stubGitea{} }
 	srv, err := NewServer(st, box, svc, "hunter2")
 	if err != nil {
@@ -55,7 +69,7 @@ func setup(t *testing.T) (*httptest.Server, *http.Client, *store.Store) {
 	t.Cleanup(ts.Close)
 	jar := newJar()
 	client := &http.Client{Jar: jar}
-	return ts, client, st
+	return ts, client, st, knownHosts
 }
 
 type jarT struct{ cookies map[string][]*http.Cookie }
@@ -283,6 +297,121 @@ func TestGenerateKeyThenSelectOnBridgeSkipsAutoInit(t *testing.T) {
 	if keys, _ := st.SSHKeys(); len(keys) != 1 {
 		t.Fatal("in-use key was deleted")
 	}
+}
+
+func TestTrustedHostsScanTrustAndDelete(t *testing.T) {
+	ts, client, st, knownHosts := setupKH(t)
+	csrf := login(t, ts, client)
+
+	port, fp := startTestSSHServer(t)
+
+	// Scan the local server — the result page shows the fingerprint.
+	resp, err := client.PostForm(ts.URL+"/hosts/scan", url.Values{
+		"csrf": {csrf}, "host": {"127.0.0.1"}, "port": {strconv.Itoa(port)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(scanBody), fp) {
+		t.Fatalf("scan page missing fingerprint %s:\n%s", fp, scanBody)
+	}
+
+	// Extract the hidden known_hosts line and trust it.
+	line := extractHidden(t, string(scanBody), "line")
+	resp, err = client.PostForm(ts.URL+"/hosts", url.Values{"csrf": {csrf}, "line": {line}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// Stored, and the managed known_hosts file now contains the line.
+	hosts, _ := st.HostKeys()
+	if len(hosts) != 1 || hosts[0].Fingerprint != fp {
+		t.Fatalf("host key not stored: %+v", hosts)
+	}
+	data, err := os.ReadFile(knownHosts)
+	if err != nil || !strings.Contains(string(data), "127.0.0.1") {
+		t.Fatalf("known_hosts not rendered: err=%v contents=%q", err, data)
+	}
+	if !strings.Contains(string(body), fp) {
+		t.Fatal("hosts page does not list the trusted key")
+	}
+
+	// Delete removes it from the DB and the file.
+	resp, err = client.PostForm(ts.URL+"/hosts/"+strconv.FormatInt(hosts[0].ID, 10)+"/delete", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if hs, _ := st.HostKeys(); len(hs) != 0 {
+		t.Fatal("host key not deleted")
+	}
+	data, _ = os.ReadFile(knownHosts)
+	if strings.Contains(string(data), "127.0.0.1") {
+		t.Fatalf("known_hosts still contains deleted host:\n%s", data)
+	}
+}
+
+func extractHidden(t *testing.T, page, name string) string {
+	t.Helper()
+	marker := `name="` + name + `" value="`
+	i := strings.Index(page, marker)
+	if i < 0 {
+		t.Fatalf("hidden field %q not found", name)
+	}
+	rest := page[i+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	// Reverse html/template attribute escaping (e.g. base64 '+' -> &#43;).
+	return html.UnescapeString(rest[:end])
+}
+
+// startTestSSHServer launches a minimal SSH server with a fixed ed25519 host
+// key that refuses auth; returns its port and the host key's SHA256 fingerprint.
+func startTestSSHServer(t *testing.T) (int, string) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	cfg := &ssh.ServerConfig{
+		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+			return nil, ssh.ErrNoAuth
+		},
+	}
+	cfg.AddHostKey(signer)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				if conn, chans, reqs, err := ssh.NewServerConn(c, cfg); err == nil {
+					go ssh.DiscardRequests(reqs)
+					for ch := range chans {
+						_ = ch.Reject(ssh.Prohibited, "no")
+					}
+					conn.Close()
+				}
+				c.Close()
+			}(c)
+		}
+	}()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	return port, ssh.FingerprintSHA256(signer.PublicKey())
 }
 
 func TestWebhookSecretAuth(t *testing.T) {
