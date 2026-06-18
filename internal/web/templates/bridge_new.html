@@ -42,20 +42,15 @@ docs/private">{{.Form.Get "excluded_paths"}}</textarea>
     <label class="check"><input type="checkbox" name="promote_signoff"> add Signed-off-by on apply</label>
   </fieldset>
   <fieldset><legend>SSH key (source clone/push + Gitea push)</legend>
-    <label>Key handling
-      <select name="ssh_key_mode">
-        <option value="mounted">Use the mounted key (~/.ssh/id_ed25519)</option>
-        <option value="generate">Generate a new keypair for this bridge</option>
-        <option value="paste">Paste an existing private key</option>
+    <label>Key
+      <select name="ssh_key_id">
+        <option value="">Use the mounted key (~/.ssh/id_ed25519)</option>
+        {{range .SSHKeys}}<option value="{{.ID}}" {{if eq ($.Form.Get "ssh_key_id") (printf "%d" .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
     </label>
-    <label>Private key <span class="muted">(only for “Paste”)</span>
-      <textarea name="ssh_private_key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----
-...
------END OPENSSH PRIVATE KEY-----"></textarea></label>
-    <small>If you generate or paste a key, its public key is shown after saving — register it as a
-    <strong>write-enabled</strong> deploy key on the source repo and add it to the Gitea account that owns
-    the mirror, then run init. Generated/pasted bridges do not auto-run init. A pinned <code>known_hosts</code>
+    <small>Manage named keys on the <a href="/keys">SSH keys</a> page. When a managed key is selected the
+    bridge does not auto-run init — register the key's public key as a <strong>write-enabled</strong> deploy
+    key on the source and Gitea first, then click Run init. A pinned <code>known_hosts</code>
     (<code>$SLUICE_DATA_DIR/known_hosts</code>) is still required.</small>
   </fieldset>
   <button type="submit">Create bridge</button>

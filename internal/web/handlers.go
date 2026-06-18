@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -88,7 +87,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // ---------- bridge create (init wizard, spec §5.1) ----------
 
 func (s *Server) handleBridgeNewForm(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, r, "bridge_new.html", map[string]any{"Form": url.Values{}})
+	s.renderPage(w, r, "bridge_new.html", map[string]any{"Form": url.Values{}, "SSHKeys": s.sshKeysOrNil()})
+}
+
+func (s *Server) sshKeysOrNil() []*store.SSHKey {
+	keys, _ := s.Store.SSHKeys()
+	return keys
 }
 
 func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
@@ -123,44 +127,24 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	return nil
 }
 
-// applySSHKeyForm applies the ssh_key_mode selection to b. It returns true
-// when a managed key was created or changed, so the caller can prompt the
-// operator to (re-)register the public key. Modes: "generate", "paste",
-// "remove"; anything else (mounted/keep) leaves the existing key untouched.
-func (s *Server) applySSHKeyForm(r *http.Request, b *store.Bridge) (changed bool, err error) {
-	switch r.PostFormValue("ssh_key_mode") {
-	case "generate":
-		priv, pub, gerr := sshkey.Generate("sluice-" + b.Slug)
-		if gerr != nil {
-			return false, fmt.Errorf("generate SSH key: %w", gerr)
-		}
-		enc, eerr := s.Box.Encrypt(sshkey.EnsureTrailingNewline(priv))
-		if eerr != nil {
-			return false, eerr
-		}
-		b.SSHPrivateKeyEnc, b.SSHPublicKey = enc, pub
-		return true, nil
-	case "paste":
-		priv := strings.TrimSpace(r.PostFormValue("ssh_private_key"))
-		if priv == "" {
-			return false, errors.New("paste a private key or choose a different SSH key option")
-		}
-		pub, perr := sshkey.PublicKeyFromPrivate(priv)
-		if perr != nil {
-			return false, perr
-		}
-		enc, eerr := s.Box.Encrypt(sshkey.EnsureTrailingNewline(priv))
-		if eerr != nil {
-			return false, eerr
-		}
-		b.SSHPrivateKeyEnc, b.SSHPublicKey = enc, pub
-		return true, nil
-	case "remove":
-		b.SSHPrivateKeyEnc, b.SSHPublicKey = nil, ""
-		return true, nil
-	default:
+// applySSHKeyForm sets b.SSHKeyID from the ssh_key_id form field — a managed
+// key chosen from the account-level key list, or empty for the mounted
+// fallback. Returns whether a managed key is selected.
+func (s *Server) applySSHKeyForm(r *http.Request, b *store.Bridge) (managed bool, err error) {
+	v := strings.TrimSpace(r.PostFormValue("ssh_key_id"))
+	if v == "" {
+		b.SSHKeyID = nil
 		return false, nil
 	}
+	id, perr := strconv.ParseInt(v, 10, 64)
+	if perr != nil {
+		return false, errors.New("invalid SSH key selection")
+	}
+	if _, err := s.Store.SSHKeyByID(id); err != nil {
+		return false, errors.New("the selected SSH key no longer exists")
+	}
+	b.SSHKeyID = &id
+	return true, nil
 }
 
 func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +159,7 @@ func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 		formErr = errors.New("a Gitea API token is required")
 	}
 	if formErr != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": formErr.Error(), "Form": r.PostForm})
+		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": formErr.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
 		return
 	}
 	var err error
@@ -190,11 +174,11 @@ func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	managedKey, sshErr := s.applySSHKeyForm(r, b)
 	if sshErr != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": sshErr.Error(), "Form": r.PostForm})
+		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": sshErr.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
 		return
 	}
 	if err := s.Store.CreateBridge(b); err != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": "create failed (slug taken?): " + err.Error(), "Form": r.PostForm})
+		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": "create failed (slug taken?): " + err.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
 		return
 	}
 	s.Store.Audit(b.ID, "admin", "bridge_created", map[string]any{"slug": b.Slug, "managed_ssh_key": managedKey})
@@ -232,10 +216,15 @@ func (s *Server) handleBridgeDetail(w http.ResponseWriter, r *http.Request) {
 	if len(b.SyncBranches) > 0 {
 		defaultBase = b.SyncBranches[0]
 	}
+	var sshKey *store.SSHKey
+	if b.SSHKeyID != nil {
+		sshKey, _ = s.Store.SSHKeyByID(*b.SSHKeyID)
+	}
 	s.renderPage(w, r, "bridge.html", map[string]any{
 		"Bridge": b, "Jobs": jobsList, "Promotions": promotions,
 		"Attention": attention, "PRs": prs, "PRErr": prErrMsg,
 		"DefaultBase": defaultBase, "Tab": r.URL.Query().Get("tab"),
+		"SSHKey": sshKey,
 	})
 }
 
@@ -251,7 +240,7 @@ func (s *Server) handleBridgeSettingsForm(w http.ResponseWriter, r *http.Request
 		webhookSecret, _ = s.Box.Decrypt(b.WebhookSecretEnc)
 	}
 	s.renderPage(w, r, "bridge_settings.html", map[string]any{
-		"Bridge": b, "WebhookSecret": webhookSecret, "Error": "",
+		"Bridge": b, "WebhookSecret": webhookSecret, "Error": "", "SSHKeys": s.sshKeysOrNil(),
 	})
 }
 
@@ -267,7 +256,7 @@ func (s *Server) handleBridgeSettings(w http.ResponseWriter, r *http.Request) {
 			webhookSecret, _ = s.Box.Decrypt(b.WebhookSecretEnc)
 		}
 		s.renderPage(w, r, "bridge_settings.html", map[string]any{
-			"Bridge": b, "WebhookSecret": webhookSecret, "Error": msg,
+			"Bridge": b, "WebhookSecret": webhookSecret, "Error": msg, "SSHKeys": s.sshKeysOrNil(),
 		})
 	}
 	if err := s.parseBridgeForm(r, b); err != nil {
@@ -589,4 +578,93 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, "audit.html", map[string]any{
 		"Entries": entries, "Names": names, "Filter": bridgeSlug, "ActionFilter": action, "Bridges": bridges,
 	})
+}
+
+// ---------- ssh keys (account-level) ----------
+
+type keyRow struct {
+	Key   *store.SSHKey
+	Users []string // bridge slugs referencing it
+}
+
+func (s *Server) renderSSHKeys(w http.ResponseWriter, r *http.Request, errMsg string) {
+	keys, err := s.Store.SSHKeys()
+	if err != nil {
+		httpError(w, 500, "load keys: %v", err)
+		return
+	}
+	rows := make([]*keyRow, len(keys))
+	for i, k := range keys {
+		users, _ := s.Store.BridgesUsingSSHKey(k.ID)
+		rows[i] = &keyRow{Key: k, Users: users}
+	}
+	s.renderPage(w, r, "keys.html", map[string]any{"Rows": rows, "Error": errMsg})
+}
+
+func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
+	s.renderSSHKeys(w, r, "")
+}
+
+func (s *Server) handleSSHKeyCreate(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PostFormValue("name"))
+	if name == "" {
+		s.renderSSHKeys(w, r, "a name is required")
+		return
+	}
+	var priv, pub string
+	switch r.PostFormValue("mode") {
+	case "paste":
+		priv = strings.TrimSpace(r.PostFormValue("private_key"))
+		if priv == "" {
+			s.renderSSHKeys(w, r, "paste a private key, or choose Generate")
+			return
+		}
+		p, err := sshkey.PublicKeyFromPrivate(priv)
+		if err != nil {
+			s.renderSSHKeys(w, r, err.Error())
+			return
+		}
+		pub = p
+	default: // generate
+		p, pk, err := sshkey.Generate("sluice-" + name)
+		if err != nil {
+			httpError(w, 500, "generate key: %v", err)
+			return
+		}
+		priv, pub = p, pk
+	}
+	enc, err := s.Box.Encrypt(sshkey.EnsureTrailingNewline(priv))
+	if err != nil {
+		httpError(w, 500, "encrypt key: %v", err)
+		return
+	}
+	if err := s.Store.CreateSSHKey(&store.SSHKey{Name: name, PublicKey: pub, PrivateKeyEnc: enc}); err != nil {
+		s.renderSSHKeys(w, r, "could not save key (name already taken?): "+err.Error())
+		return
+	}
+	s.Store.Audit(0, "admin", "ssh_key_created", map[string]any{"name": name})
+	http.Redirect(w, r, "/keys", http.StatusSeeOther)
+}
+
+func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	users, err := s.Store.BridgesUsingSSHKey(id)
+	if err != nil {
+		httpError(w, 500, "%v", err)
+		return
+	}
+	if len(users) > 0 {
+		s.renderSSHKeys(w, r, "cannot delete: still used by "+strings.Join(users, ", "))
+		return
+	}
+	if err := s.Store.DeleteSSHKey(id); err != nil {
+		httpError(w, 500, "delete key: %v", err)
+		return
+	}
+	s.Store.Audit(0, "admin", "ssh_key_deleted", map[string]any{"id": id})
+	http.Redirect(w, r, "/keys", http.StatusSeeOther)
 }

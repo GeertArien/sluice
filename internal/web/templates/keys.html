@@ -1,0 +1,54 @@
+{{template "head" .}}
+<div class="pagehead">
+  <h1>SSH keys</h1>
+</div>
+<p class="muted">Named deploy keys you can reuse across bridges. The private key is stored
+encrypted at rest and never shown; register the public key as a
+<strong>write-enabled</strong> deploy key on each source repo and on the Gitea account that
+owns the mirror.</p>
+
+{{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+
+{{if not .Rows}}
+<div class="empty">No keys yet. Generate one below, then select it when creating or editing a bridge.</div>
+{{else}}
+<table>
+  <tr><th>name</th><th>public key</th><th>used by</th><th>created</th><th></th></tr>
+  {{range .Rows}}
+  <tr>
+    <td><strong>{{.Key.Name}}</strong></td>
+    <td><code class="wrap">{{.Key.PublicKey}}</code>
+        <button type="button" class="btn" data-copy="{{.Key.PublicKey}}">copy</button></td>
+    <td>{{if .Users}}{{join .Users ", "}}{{else}}<span class="muted">unused</span>{{end}}</td>
+    <td>{{.Key.CreatedAt.Local.Format "2006-01-02"}}</td>
+    <td>
+      {{if not .Users}}
+      <form method="post" action="/keys/{{.Key.ID}}/delete" class="inline"
+            data-confirm="Delete SSH key '{{.Key.Name}}'? This cannot be undone.">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button class="dangerbtn">Delete</button>
+      </form>
+      {{else}}<span class="muted">in use</span>{{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+
+<section class="mt">
+  <h2>Add a key</h2>
+  <form method="post" action="/keys" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Name <input name="name" placeholder="e.g. github-deploy" required></label>
+    <label>How
+      <select name="mode" id="keymode">
+        <option value="generate">Generate a new ed25519 keypair</option>
+        <option value="paste">Paste an existing private key</option>
+      </select>
+    </label>
+    <label>Private key <span class="muted">(only for “Paste”)</span>
+      <textarea name="private_key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
+    <button type="submit">Add key</button>
+  </form>
+</section>
+{{template "foot" .}}

@@ -117,6 +117,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /jobs/{id}", s.auth(s.handleJobDetail))
 	s.mux.HandleFunc("GET /jobs/{id}/log", s.auth(s.handleJobLog))
 	s.mux.HandleFunc("GET /audit", s.auth(s.handleAudit))
+	s.mux.HandleFunc("GET /keys", s.auth(s.handleSSHKeys))
+	s.mux.HandleFunc("POST /keys", s.auth(s.handleSSHKeyCreate))
+	s.mux.HandleFunc("POST /keys/{id}/delete", s.auth(s.handleSSHKeyDelete))
 	s.mux.HandleFunc("POST /hooks/{slug}", s.handleWebhook) // secret-authenticated, no session
 }
 

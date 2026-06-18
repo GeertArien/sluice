@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS bridges (
   webhook_secret_enc BLOB,
   ssh_private_key_enc BLOB,
   ssh_public_key TEXT NOT NULL DEFAULT '',
+  ssh_key_id INTEGER,
   status TEXT NOT NULL DEFAULT 'paused',
   last_sync_at TIMESTAMP,
   last_sync_ok INTEGER,
@@ -95,6 +96,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT NOT NULL DEFAULT '{}',
   at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS ssh_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
+  private_key_enc BLOB NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `)
 	if err != nil {
 		return err
@@ -104,8 +112,53 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	for _, c := range []struct{ col, def string }{
 		{"ssh_private_key_enc", "BLOB"},
 		{"ssh_public_key", "TEXT NOT NULL DEFAULT ''"},
+		{"ssh_key_id", "INTEGER"},
 	} {
 		if err := s.addColumnIfMissing("bridges", c.col, c.def); err != nil {
+			return err
+		}
+	}
+	// Migrate any legacy per-bridge inline keys into named ssh_keys rows so
+	// they keep working under the account-level key model. Idempotent: once a
+	// bridge has ssh_key_id set it is excluded.
+	return s.migrateInlineKeys()
+}
+
+// migrateInlineKeys moves pre-existing per-bridge SSH keys into the ssh_keys
+// table and links them via ssh_key_id.
+func (s *Store) migrateInlineKeys() error {
+	rows, err := s.DB.Query(`SELECT id, slug, ssh_public_key, ssh_private_key_enc
+ FROM bridges WHERE ssh_private_key_enc IS NOT NULL AND ssh_key_id IS NULL`)
+	if err != nil {
+		return err
+	}
+	type legacy struct {
+		id   int64
+		slug string
+		pub  string
+		priv []byte
+	}
+	var pending []legacy
+	for rows.Next() {
+		var l legacy
+		if err := rows.Scan(&l.id, &l.slug, &l.pub, &l.priv); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, l := range pending {
+		res, err := s.DB.Exec(`INSERT INTO ssh_keys (name, public_key, private_key_enc) VALUES (?,?,?)`,
+			"bridge-"+l.slug, l.pub, l.priv)
+		if err != nil {
+			return err
+		}
+		keyID, _ := res.LastInsertId()
+		if _, err := s.DB.Exec(`UPDATE bridges SET ssh_key_id=? WHERE id=?`, keyID, l.id); err != nil {
 			return err
 		}
 	}
@@ -161,8 +214,7 @@ type Bridge struct {
 	PromoteSignoff     bool
 	ScheduleCron       string
 	WebhookSecretEnc   []byte
-	SSHPrivateKeyEnc   []byte
-	SSHPublicKey       string
+	SSHKeyID           *int64
 	Status             string
 	LastSyncAt         *time.Time
 	LastSyncOK         *bool
@@ -189,8 +241,7 @@ func fromJSONArr(s string) []string {
 const bridgeCols = `id, name, slug, source_remote_url, gitea_base_url, gitea_owner,
  gitea_repo, gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches,
  sync_globs, tripwire_strings, promote_name, promote_email, promote_keep_trailer,
- promote_signoff, schedule_cron, webhook_secret_enc, ssh_private_key_enc,
- ssh_public_key, status,
+ promote_signoff, schedule_cron, webhook_secret_enc, ssh_key_id, status,
  last_sync_at, last_sync_ok, last_verified_at, last_verify_ok, created_at, updated_at`
 
 func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
@@ -198,11 +249,12 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	var excl, branches, globs, tripwires string
 	var lastSyncOK, lastVerifyOK sql.NullBool
 	var lastSyncAt, lastVerifiedAt sql.NullTime
+	var sshKeyID sql.NullInt64
 	err := row.Scan(&b.ID, &b.Name, &b.Slug, &b.SourceRemoteURL, &b.GiteaBaseURL,
 		&b.GiteaOwner, &b.GiteaRepo, &b.GiteaSSHURL, &b.GiteaTokenEnc,
 		&excl, &branches, &globs, &tripwires,
 		&b.PromoteName, &b.PromoteEmail, &b.PromoteKeepTrailer, &b.PromoteSignoff,
-		&b.ScheduleCron, &b.WebhookSecretEnc, &b.SSHPrivateKeyEnc, &b.SSHPublicKey, &b.Status,
+		&b.ScheduleCron, &b.WebhookSecretEnc, &sshKeyID, &b.Status,
 		&lastSyncAt, &lastSyncOK, &lastVerifiedAt, &lastVerifyOK,
 		&b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -210,6 +262,9 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if sshKeyID.Valid {
+		b.SSHKeyID = &sshKeyID.Int64
 	}
 	b.ExcludedPaths = fromJSONArr(excl)
 	b.SyncBranches = fromJSONArr(branches)
@@ -235,14 +290,13 @@ func (s *Store) CreateBridge(b *Bridge) error {
  (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo,
   gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches, sync_globs,
   tripwire_strings, promote_name, promote_email, promote_keep_trailer,
-  promote_signoff, schedule_cron, webhook_secret_enc, ssh_private_key_enc,
-  ssh_public_key, status)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  promote_signoff, schedule_cron, webhook_secret_enc, ssh_key_id, status)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.Name, b.Slug, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
 		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron, b.WebhookSecretEnc,
-		b.SSHPrivateKeyEnc, b.SSHPublicKey, b.Status)
+		b.SSHKeyID, b.Status)
 	if err != nil {
 		return err
 	}
@@ -256,18 +310,95 @@ func (s *Store) UpdateBridge(b *Bridge) error {
  gitea_ssh_url=?, gitea_token_enc=?, excluded_paths=?, sync_branches=?,
  sync_globs=?, tripwire_strings=?, promote_name=?, promote_email=?,
  promote_keep_trailer=?, promote_signoff=?, schedule_cron=?,
- webhook_secret_enc=?, ssh_private_key_enc=?, ssh_public_key=?,
+ webhook_secret_enc=?, ssh_key_id=?,
  status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		b.Name, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
 		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron,
-		b.WebhookSecretEnc, b.SSHPrivateKeyEnc, b.SSHPublicKey, b.Status, b.ID)
+		b.WebhookSecretEnc, b.SSHKeyID, b.Status, b.ID)
 	return err
 }
 
 func (s *Store) SetBridgeStatus(id int64, status string) error {
 	_, err := s.DB.Exec(`UPDATE bridges SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, status, id)
+	return err
+}
+
+// ---------- ssh keys (account-level, named, reusable across bridges) ----------
+
+type SSHKey struct {
+	ID            int64
+	Name          string
+	PublicKey     string
+	PrivateKeyEnc []byte
+	CreatedAt     time.Time
+}
+
+func (s *Store) CreateSSHKey(k *SSHKey) error {
+	res, err := s.DB.Exec(`INSERT INTO ssh_keys (name, public_key, private_key_enc) VALUES (?,?,?)`,
+		k.Name, k.PublicKey, k.PrivateKeyEnc)
+	if err != nil {
+		return err
+	}
+	k.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func scanSSHKey(row interface{ Scan(...any) error }) (*SSHKey, error) {
+	k := &SSHKey{}
+	err := row.Scan(&k.ID, &k.Name, &k.PublicKey, &k.PrivateKeyEnc, &k.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+func (s *Store) SSHKeyByID(id int64) (*SSHKey, error) {
+	return scanSSHKey(s.DB.QueryRow(`SELECT id, name, public_key, private_key_enc, created_at FROM ssh_keys WHERE id=?`, id))
+}
+
+func (s *Store) SSHKeys() ([]*SSHKey, error) {
+	rows, err := s.DB.Query(`SELECT id, name, public_key, private_key_enc, created_at FROM ssh_keys ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*SSHKey
+	for rows.Next() {
+		k, err := scanSSHKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// BridgesUsingSSHKey returns the slugs of bridges referencing a key, used to
+// block deletion of a key still in use.
+func (s *Store) BridgesUsingSSHKey(id int64) ([]string, error) {
+	rows, err := s.DB.Query(`SELECT slug FROM bridges WHERE ssh_key_id=? ORDER BY slug`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, rows.Err()
+}
+
+func (s *Store) DeleteSSHKey(id int64) error {
+	_, err := s.DB.Exec(`DELETE FROM ssh_keys WHERE id=?`, id)
 	return err
 }
 
