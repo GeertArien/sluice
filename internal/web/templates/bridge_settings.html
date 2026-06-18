@@ -1,0 +1,62 @@
+{{template "head" .}}
+{{$b := .Bridge}}
+<h1>Settings — {{$b.Name}}</h1>
+<p><a href="/bridges/{{$b.Slug}}">&larr; back to bridge</a></p>
+{{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+
+<form method="post" action="/bridges/{{$b.Slug}}/settings" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset><legend>Identity</legend>
+    <label>Name <input name="name" value="{{$b.Name}}" required></label>
+  </fieldset>
+  <fieldset><legend>Source repository</legend>
+    <label>Source remote URL <input name="source_remote_url" value="{{$b.SourceRemoteURL}}" required></label>
+  </fieldset>
+  <fieldset><legend>Gitea mirror</legend>
+    <label>Gitea base URL <input name="gitea_base_url" value="{{$b.GiteaBaseURL}}" required></label>
+    <label>Owner <input name="gitea_owner" value="{{$b.GiteaOwner}}" required></label>
+    <label>Repository <input name="gitea_repo" value="{{$b.GiteaRepo}}" required></label>
+    <label>Gitea SSH URL <input name="gitea_ssh_url" value="{{$b.GiteaSSHURL}}"></label>
+    <label>Gitea API token <input type="password" name="gitea_token" placeholder="leave empty to keep current token"></label>
+  </fieldset>
+  <fieldset class="danger"><legend>Filter — changing this rewrites ALL filtered SHAs</legend>
+    <p class="muted">Determinism only holds for an unchanged filter. Editing excluded paths
+    orphans every existing agent branch on the mirror, triggers a full re-sync (force-push),
+    and marks open promotions as needing attention. Type the slug
+    <code>{{$b.Slug}}</code> below to confirm a filter change.</p>
+    <label>Excluded paths (one per line) <textarea name="excluded_paths" rows="4" required>{{join $b.ExcludedPaths "\n"}}</textarea></label>
+    <label>Confirmation <input name="confirm_slug" placeholder="type the slug only if you changed excluded paths" autocomplete="off"></label>
+    <label>Tripwire strings (one per line) <textarea name="tripwire_strings" rows="2">{{join $b.TripwireStrings "\n"}}</textarea></label>
+  </fieldset>
+  <fieldset><legend>Sync</legend>
+    <label>Branches (comma separated) <input name="sync_branches" value="{{join $b.SyncBranches ", "}}" required></label>
+    <label>Ref globs (comma separated) <input name="sync_globs" value="{{join $b.SyncGlobs ", "}}"></label>
+    <label>Cron schedule <input name="schedule_cron" value="{{$b.ScheduleCron}}" placeholder="*/15 * * * *"></label>
+  </fieldset>
+  <fieldset><legend>Promotion identity rewrite</legend>
+    <label>Name <input name="promote_name" value="{{$b.PromoteName}}"></label>
+    <label>Email <input name="promote_email" value="{{$b.PromoteEmail}}"></label>
+    <label class="check"><input type="checkbox" name="promote_keep_trailer" {{if $b.PromoteKeepTrailer}}checked{{end}}> add Co-authored-by trailer</label>
+    <label class="check"><input type="checkbox" name="promote_signoff" {{if $b.PromoteSignoff}}checked{{end}}> add Signed-off-by on apply</label>
+  </fieldset>
+  <button type="submit">Save settings</button>
+</form>
+
+<section class="mt">
+  <h2>Webhook</h2>
+  <table class="kv">
+    <tr><th>endpoint</th><td><code>POST /hooks/{{$b.Slug}}</code></td></tr>
+    <tr><th>header</th><td><code>X-Sluice-Secret: {{.WebhookSecret}}</code></td></tr>
+  </table>
+</section>
+
+<section class="danger mt">
+  <h2>Danger zone</h2>
+  <form method="post" action="/bridges/{{$b.Slug}}/delete" class="inline-form"
+        data-confirm="Delete bridge '{{$b.Slug}}' and its local workspace? The Gitea repo and source remote are NOT touched.">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input name="confirm_slug" placeholder="type the slug to confirm" autocomplete="off" required>
+    <button class="dangerbtn">Delete bridge</button>
+  </form>
+</section>
+{{template "foot" .}}

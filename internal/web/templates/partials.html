@@ -1,0 +1,23 @@
+{{define "head"}}<!doctype html>
+<html><head><meta charset="utf-8"><title>Sluice</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<nav>
+  <a href="/" class="brand">&#9881; sluice</a>
+  <a href="/audit">audit log</a>
+  <span class="spacer"></span>
+  <form method="post" action="/logout" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="linklike">logout</button>
+  </form>
+</nav>
+<main>
+{{end}}
+
+{{define "foot"}}</main>
+<script src="/static/app.js"></script>
+</body></html>{{end}}
+
+{{define "badge"}}<span class="badge badge-{{.}}">{{.}}</span>{{end}}
+
+{{define "sha"}}<code class="sha" title="click to copy" data-sha="{{.}}">{{if gt (len .) 12}}{{slice . 0 12}}{{else}}{{.}}{{end}}</code>{{end}}

@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Sluice — login</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<main class="login">
+  <h1>&#9881; sluice</h1>
+  <p class="muted">filtered mirrors, controlled in both directions</p>
+  {{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+  <form method="post" action="/login">
+    <label>Admin password
+      <input type="password" name="password" autofocus required>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+</body></html>

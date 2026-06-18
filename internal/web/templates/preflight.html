@@ -1,0 +1,70 @@
+{{template "head" .}}
+{{$b := .Bridge}}
+<h1>Pre-flight: <code>{{.Branch}}</code> &rarr; <code>{{.Base}}</code></h1>
+<p><a href="/bridges/{{$b.Slug}}">&larr; back to {{$b.Name}}</a></p>
+
+{{if .Busy}}
+<div class="banner banner-yellow">A job is currently running for this bridge. Retry the pre-flight when it finishes.</div>
+{{else if .Error}}
+<div class="banner banner-red">{{.Error}}</div>
+{{else}}{{with .Preflight}}
+
+<table class="kv">
+  <tr><th>tip (filtered)</th><td>{{template "sha" .TipSHA}}</td></tr>
+  <tr><th>merge-base (filtered)</th><td>{{template "sha" .BaseFiltered}}</td></tr>
+  <tr><th>merge-base (real)</th><td>
+    {{if .BaseReal}}{{template "sha" .BaseReal}} <span class="badge badge-success">resolved</span>
+    {{else}}<span class="badge badge-failed">UNRESOLVED</span> {{.BaseRealErr}}{{end}}</td></tr>
+  <tr><th>linearity</th><td>
+    {{if eq .MergeCount 0}}<span class="badge badge-success">PASS</span> no merge commits
+    {{else}}<span class="badge badge-failed">FAIL</span> {{.MergeCount}} merge commit(s) — agent must rebase onto {{$.Base}}, force-push, retry{{end}}</td></tr>
+  <tr><th>commits</th><td>{{.CommitCount}}{{if eq .CommitCount 0}} <span class="badge badge-failed">empty branch</span>{{end}}</td></tr>
+  <tr><th>staleness</th><td>
+    {{if gt .Behind 0}}<span class="badge badge-needs_attention">{{.Behind}} commit(s) behind {{$.Base}}</span> consider asking the agent to rebase
+    {{else}}up to date with mirror base{{end}}</td></tr>
+  <tr><th>excluded-path guard</th><td>
+    {{if .GuardOK}}<span class="badge badge-success">PASS</span>
+    {{else}}<span class="badge badge-failed">FAIL — touches excluded paths</span>{{end}}</td></tr>
+</table>
+
+{{if not .GuardOK}}
+<div class="banner banner-red">
+  <strong>Security guard failed.</strong> These diff headers touch excluded paths; promotion is blocked with no override:
+  <pre>{{.GuardDetail}}</pre>
+</div>
+{{end}}
+
+<h2>Commits to promote</h2>
+<table>
+  <tr><th>sha</th><th>author</th><th>subject</th><th>files</th></tr>
+  {{range .Commits}}
+  <tr>
+    <td>{{template "sha" .SHA}}</td>
+    <td>{{.Author}}</td>
+    <td>{{.Subject}}</td>
+    <td class="muted">{{join .Files ", "}}</td>
+  </tr>
+  {{end}}
+</table>
+{{if $.PromoteIdentity}}
+<p class="muted">Identity rewrite is ON: commits will land as
+<code>{{$b.PromoteName}} &lt;{{$b.PromoteEmail}}&gt;</code> (author + committer, original
+author dates kept{{if $b.PromoteKeepTrailer}}, original agent recorded as Co-authored-by{{end}}).</p>
+{{else}}
+<p class="muted">Identity rewrite is OFF: original agent authorship is preserved.</p>
+{{end}}
+
+{{if and .GuardOK (eq .MergeCount 0) (gt .CommitCount 0) .BaseReal}}
+<form method="post" action="/bridges/{{$b.Slug}}/promote"
+      data-confirm="This will apply {{.CommitCount}} commit(s) onto the real history and push branch ai/{{$.Branch}} to {{$b.SourceRemoteURL}}.">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="branch" value="{{$.Branch}}">
+  <input type="hidden" name="base" value="{{$.Base}}">
+  <button class="primary">Promote to ai/{{$.Branch}}</button>
+</form>
+{{else}}
+<p class="banner banner-yellow">Promotion blocked until all checks above pass.</p>
+{{end}}
+
+{{end}}{{end}}
+{{template "foot" .}}

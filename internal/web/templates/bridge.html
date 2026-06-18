@@ -1,0 +1,137 @@
+{{template "head" .}}
+{{$b := .Bridge}}{{$csrf := .CSRF}}
+<div class="pagehead">
+  <h1>{{$b.Name}} {{template "badge" $b.Status}}</h1>
+  <div class="actions">
+    <form method="post" action="/bridges/{{$b.Slug}}/sync" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>Sync now</button></form>
+    <form method="post" action="/bridges/{{$b.Slug}}/verify" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>Verify</button></form>
+    {{if eq $b.Status "active"}}
+      <form method="post" action="/bridges/{{$b.Slug}}/pause" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>Pause</button></form>
+    {{else}}
+      <form method="post" action="/bridges/{{$b.Slug}}/activate" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="primary">Activate</button></form>
+    {{end}}
+    <a class="btn" href="/bridges/{{$b.Slug}}/settings">Settings</a>
+  </div>
+</div>
+
+{{if .Attention}}
+<div class="banner banner-red">
+  <strong>{{len .Attention}} job(s) need attention.</strong>
+  {{range .Attention}}<a href="/jobs/{{.ID}}">job #{{.ID}} ({{.Kind}})</a> {{end}}
+</div>
+{{end}}
+{{if $b.LastVerifyOK}}{{if not (deref $b.LastVerifyOK)}}
+<div class="banner banner-red"><strong>Last verification FAILED — possible leak in the filtered mirror.</strong> Check the latest verify job log.</div>
+{{end}}{{end}}
+
+<section>
+  <h2>Overview</h2>
+  <table class="kv">
+    <tr><th>source</th><td><code>{{$b.SourceRemoteURL}}</code></td></tr>
+    <tr><th>gitea</th><td><code>{{$b.GiteaBaseURL}}/{{$b.GiteaOwner}}/{{$b.GiteaRepo}}</code> &middot; ssh <code>{{$b.GiteaSSHURL}}</code></td></tr>
+    <tr><th>excluded paths</th><td><code>{{join $b.ExcludedPaths ", "}}</code></td></tr>
+    <tr><th>sync branches</th><td><code>{{join $b.SyncBranches ", "}}</code>{{if $b.SyncGlobs}} + globs <code>{{join $b.SyncGlobs ", "}}</code>{{end}}</td></tr>
+    <tr><th>schedule</th><td>{{if $b.ScheduleCron}}<code>{{$b.ScheduleCron}}</code>{{else}}manual / webhook only{{end}}</td></tr>
+    <tr><th>last sync</th><td>{{timefmt $b.LastSyncAt}} {{if $b.LastSyncOK}}{{if deref $b.LastSyncOK}}<span class="badge badge-success">ok</span>{{else}}<span class="badge badge-failed">failed</span>{{end}}{{end}}</td></tr>
+    <tr><th>last verified</th><td>{{timefmt $b.LastVerifiedAt}} {{if $b.LastVerifyOK}}{{if deref $b.LastVerifyOK}}<span class="badge badge-success">clean</span>{{else}}<span class="badge badge-failed">LEAK</span>{{end}}{{end}}</td></tr>
+    <tr><th>identity rewrite</th><td>{{if $b.PromoteName}}<code>{{$b.PromoteName}} &lt;{{$b.PromoteEmail}}&gt;</code>{{if $b.PromoteKeepTrailer}} + Co-authored-by{{end}}{{if $b.PromoteSignoff}} + signoff{{end}}{{else}}off (agent identity preserved){{end}}</td></tr>
+  </table>
+</section>
+
+<section id="prs">
+  <h2>Agent PRs <span class="muted">(live from Gitea)</span></h2>
+  {{if .PRErr}}<div class="banner banner-yellow">Could not reach the Gitea API: {{.PRErr}}</div>{{end}}
+  {{if not .PRs}}<div class="empty">No open pull requests on the mirror.</div>
+  {{else}}
+  <table>
+    <tr><th>#</th><th>title</th><th>author</th><th>head &rarr; base</th><th>mergeable</th><th></th></tr>
+    {{range .PRs}}
+    <tr>
+      <td><a href="{{.HTMLURL}}">#{{.Number}}</a></td>
+      <td>{{.Title}}</td>
+      <td>{{.User.Login}}</td>
+      <td><code>{{.Head.Ref}}</code> &rarr; <code>{{.Base.Ref}}</code></td>
+      <td>{{if .Mergeable}}yes{{else}}<span class="badge badge-failed">no</span>{{end}}</td>
+      <td><a class="btn" href="/bridges/{{$b.Slug}}/preflight?branch={{.Head.Ref}}&base={{.Base.Ref}}">Pre-flight / Promote</a></td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+  <details class="mt">
+    <summary>Promote a branch without a PR</summary>
+    <form method="get" action="/bridges/{{$b.Slug}}/preflight" class="inline-form">
+      <input name="branch" placeholder="branch" required>
+      <input name="base" value="{{.DefaultBase}}" placeholder="base" required>
+      <button>Pre-flight</button>
+    </form>
+  </details>
+</section>
+
+<section id="promotions">
+  <h2>Promotions</h2>
+  {{if not .Promotions}}<div class="empty">Nothing promoted yet.</div>
+  {{else}}
+  <table>
+    <tr><th>gitea branch</th><th>PR</th><th>real branch</th><th>tip</th><th>base</th><th>status</th><th>created</th><th>actions</th></tr>
+    {{range .Promotions}}
+    <tr>
+      <td><code>{{.GiteaBranch}}</code></td>
+      <td>{{if .GiteaPRNumber}}#{{.GiteaPRNumber}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td><code>{{.RealBranch}}</code></td>
+      <td>{{if .RealTipSHA}}{{template "sha" .RealTipSHA}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td><code>{{.BaseBranch}}</code></td>
+      <td>{{template "badge" .Status}}</td>
+      <td>{{.CreatedAt.Local.Format "2006-01-02 15:04"}}</td>
+      <td>
+        {{if eq .Status "promoted"}}
+        <form method="post" action="/promotions/{{.ID}}/finalize" class="inline"
+              data-confirm="Mark '{{.GiteaBranch}}' as merged upstream? This closes the Gitea PR and deletes both branches.">
+          <input type="hidden" name="csrf" value="{{$csrf}}"><button>Mark as merged</button></form>
+        {{end}}
+        {{if or (eq .Status "conflict") (eq .Status "needs_attention")}}
+        <form method="post" action="/promotions/{{.ID}}/abort" class="inline"
+              data-confirm="Abort the conflicted promotion of '{{.GiteaBranch}}'? This runs git am --abort and resets the workspace.">
+          <input type="hidden" name="csrf" value="{{$csrf}}"><button>Abort</button></form>
+        <details class="inline"><summary>Mark promoted manually</summary>
+          <form method="post" action="/promotions/{{.ID}}/mark-promoted" class="inline-form">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <input name="tip_sha" placeholder="full 40-char tip SHA after manual push" pattern="[0-9a-fA-F]{40}" required>
+            <button>Record</button>
+          </form>
+        </details>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+  <p class="muted">Squash merges upstream cannot be auto-detected (patch-ids change) — use “Mark as merged”.</p>
+</section>
+
+<section id="jobs">
+  <h2>Jobs</h2>
+  {{if not .Jobs}}<div class="empty">No jobs yet.</div>
+  {{else}}
+  <table>
+    <tr><th>#</th><th>kind</th><th>status</th><th>queued</th><th>finished</th><th>error</th></tr>
+    {{range .Jobs}}
+    <tr>
+      <td><a href="/jobs/{{.ID}}">{{.ID}}</a></td>
+      <td>{{.Kind}}</td>
+      <td>{{template "badge" .Status}}</td>
+      <td>{{.CreatedAt.Local.Format "01-02 15:04:05"}}</td>
+      <td>{{if .FinishedAt}}{{.FinishedAt.Local.Format "01-02 15:04:05"}}{{else}}—{{end}}</td>
+      <td class="muted">{{.ErrorSummary}}</td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+</section>
+
+<section>
+  <h2>Webhook</h2>
+  <p>Point a Gitea/source webhook at <code>POST /hooks/{{$b.Slug}}</code> with header
+  <code>X-Sluice-Secret</code> (value on the <a href="/bridges/{{$b.Slug}}/settings">settings page</a>).
+  Bursts are coalesced (~30s debounce).</p>
+</section>
+{{template "foot" .}}
