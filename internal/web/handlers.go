@@ -418,16 +418,20 @@ func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
 	}
 	branch := strings.TrimSpace(r.PostFormValue("branch"))
 	base := strings.TrimSpace(r.PostFormValue("base"))
+	target := strings.TrimSpace(r.PostFormValue("target"))
 	if branch == "" || base == "" {
 		httpError(w, 400, "branch and base are required")
 		return
 	}
-	jobID, err := s.Jobs.Enqueue(b.ID, "promote", map[string]string{"branch": branch, "base": base})
+	if target == "" {
+		target = branch
+	}
+	jobID, err := s.Jobs.Enqueue(b.ID, "promote", map[string]string{"branch": branch, "base": base, "target": target})
 	if err != nil {
 		httpError(w, 500, "enqueue promote: %v", err)
 		return
 	}
-	s.Store.Audit(b.ID, "admin", "promote_enqueued", map[string]string{"branch": branch, "base": base})
+	s.Store.Audit(b.ID, "admin", "promote_enqueued", map[string]string{"branch": branch, "base": base, "target": target})
 	http.Redirect(w, r, "/jobs/"+strconv.FormatInt(jobID, 10), http.StatusSeeOther)
 }
 
