@@ -42,10 +42,20 @@ type Engine struct {
 	Runner     *execx.Runner
 }
 
-func New(workdir, knownHosts string, runner *execx.Runner) *Engine {
-	if runner.Env == nil && knownHosts != "" {
-		runner.Env = append(runner.Env,
-			"GIT_SSH_COMMAND=ssh -o UserKnownHostsFile="+knownHosts+" -o StrictHostKeyChecking=yes")
+// New builds an engine. sshKeyPath, when non-empty, is a per-bridge private
+// key file that ssh must use exclusively (IdentitiesOnly); when empty, ssh
+// falls back to the container's default identity (e.g. a mounted
+// ~/.ssh/id_ed25519).
+func New(workdir, knownHosts, sshKeyPath string, runner *execx.Runner) *Engine {
+	if runner.Env == nil && (knownHosts != "" || sshKeyPath != "") {
+		ssh := "ssh"
+		if sshKeyPath != "" {
+			ssh += " -i " + sshKeyPath + " -o IdentitiesOnly=yes"
+		}
+		if knownHosts != "" {
+			ssh += " -o UserKnownHostsFile=" + knownHosts + " -o StrictHostKeyChecking=yes"
+		}
+		runner.Env = append(runner.Env, "GIT_SSH_COMMAND="+ssh)
 	}
 	// Never let git prompt for credentials inside a job.
 	runner.Env = append(runner.Env, "GIT_TERMINAL_PROMPT=0")

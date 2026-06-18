@@ -41,6 +41,23 @@ docs/private">{{.Form.Get "excluded_paths"}}</textarea>
     <label class="check"><input type="checkbox" name="promote_keep_trailer" checked> add Co-authored-by trailer with the original agent identity</label>
     <label class="check"><input type="checkbox" name="promote_signoff"> add Signed-off-by on apply</label>
   </fieldset>
-  <button type="submit">Create bridge &amp; run init</button>
+  <fieldset><legend>SSH key (source clone/push + Gitea push)</legend>
+    <label>Key handling
+      <select name="ssh_key_mode">
+        <option value="mounted">Use the mounted key (~/.ssh/id_ed25519)</option>
+        <option value="generate">Generate a new keypair for this bridge</option>
+        <option value="paste">Paste an existing private key</option>
+      </select>
+    </label>
+    <label>Private key <span class="muted">(only for “Paste”)</span>
+      <textarea name="ssh_private_key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----"></textarea></label>
+    <small>If you generate or paste a key, its public key is shown after saving — register it as a
+    <strong>write-enabled</strong> deploy key on the source repo and add it to the Gitea account that owns
+    the mirror, then run init. Generated/pasted bridges do not auto-run init. A pinned <code>known_hosts</code>
+    (<code>$SLUICE_DATA_DIR/known_hosts</code>) is still required.</small>
+  </fieldset>
+  <button type="submit">Create bridge</button>
 </form>
 {{template "foot" .}}

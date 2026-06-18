@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/geertarien/sluice/internal/engine"
 	"github.com/geertarien/sluice/internal/gitea"
 	"github.com/geertarien/sluice/internal/jobs"
+	"github.com/geertarien/sluice/internal/sshkey"
 	"github.com/geertarien/sluice/internal/store"
 )
 
@@ -121,6 +123,46 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	return nil
 }
 
+// applySSHKeyForm applies the ssh_key_mode selection to b. It returns true
+// when a managed key was created or changed, so the caller can prompt the
+// operator to (re-)register the public key. Modes: "generate", "paste",
+// "remove"; anything else (mounted/keep) leaves the existing key untouched.
+func (s *Server) applySSHKeyForm(r *http.Request, b *store.Bridge) (changed bool, err error) {
+	switch r.PostFormValue("ssh_key_mode") {
+	case "generate":
+		priv, pub, gerr := sshkey.Generate("sluice-" + b.Slug)
+		if gerr != nil {
+			return false, fmt.Errorf("generate SSH key: %w", gerr)
+		}
+		enc, eerr := s.Box.Encrypt(sshkey.EnsureTrailingNewline(priv))
+		if eerr != nil {
+			return false, eerr
+		}
+		b.SSHPrivateKeyEnc, b.SSHPublicKey = enc, pub
+		return true, nil
+	case "paste":
+		priv := strings.TrimSpace(r.PostFormValue("ssh_private_key"))
+		if priv == "" {
+			return false, errors.New("paste a private key or choose a different SSH key option")
+		}
+		pub, perr := sshkey.PublicKeyFromPrivate(priv)
+		if perr != nil {
+			return false, perr
+		}
+		enc, eerr := s.Box.Encrypt(sshkey.EnsureTrailingNewline(priv))
+		if eerr != nil {
+			return false, eerr
+		}
+		b.SSHPrivateKeyEnc, b.SSHPublicKey = enc, pub
+		return true, nil
+	case "remove":
+		b.SSHPrivateKeyEnc, b.SSHPublicKey = nil, ""
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 	b := &store.Bridge{Status: "paused"}
 	formErr := s.parseBridgeForm(r, b)
@@ -146,11 +188,23 @@ func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, "encrypt webhook secret: %v", err)
 		return
 	}
+	managedKey, sshErr := s.applySSHKeyForm(r, b)
+	if sshErr != nil {
+		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": sshErr.Error(), "Form": r.PostForm})
+		return
+	}
 	if err := s.Store.CreateBridge(b); err != nil {
 		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": "create failed (slug taken?): " + err.Error(), "Form": r.PostForm})
 		return
 	}
-	s.Store.Audit(b.ID, "admin", "bridge_created", map[string]any{"slug": b.Slug})
+	s.Store.Audit(b.ID, "admin", "bridge_created", map[string]any{"slug": b.Slug, "managed_ssh_key": managedKey})
+	if managedKey {
+		// The public key must be registered on the source and Gitea before init
+		// can authenticate, so don't auto-run it — send the operator to the
+		// bridge page where the key and a "Run init" button are shown.
+		http.Redirect(w, r, "/bridges/"+b.Slug, http.StatusSeeOther)
+		return
+	}
 	jobID, err := s.Jobs.Enqueue(b.ID, "init", nil)
 	if err != nil {
 		httpError(w, 500, "enqueue init: %v", err)
@@ -227,6 +281,10 @@ func (s *Server) handleBridgeSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.GiteaTokenEnc = enc
+	}
+	if _, err := s.applySSHKeyForm(r, b); err != nil {
+		renderErr(err.Error())
+		return
 	}
 	filterChanged := strings.Join(b.ExcludedPaths, "\n") != oldExcluded
 	if filterChanged {

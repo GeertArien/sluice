@@ -3,6 +3,8 @@
 <div class="pagehead">
   <h1>{{$b.Name}} {{template "badge" $b.Status}}</h1>
   <div class="actions">
+    <form method="post" action="/bridges/{{$b.Slug}}/init" class="inline"
+          data-confirm="Run init for {{$b.Slug}}? Creates the Gitea repo if missing, clones, runs the first filtered sync, then verifies."><input type="hidden" name="csrf" value="{{$csrf}}"><button>Run init</button></form>
     <form method="post" action="/bridges/{{$b.Slug}}/sync" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>Sync now</button></form>
     <form method="post" action="/bridges/{{$b.Slug}}/verify" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>Verify</button></form>
     {{if eq $b.Status "active"}}
@@ -23,6 +25,13 @@
 {{if $b.LastVerifyOK}}{{if not (deref $b.LastVerifyOK)}}
 <div class="banner banner-red"><strong>Last verification FAILED — possible leak in the filtered mirror.</strong> Check the latest verify job log.</div>
 {{end}}{{end}}
+{{if and $b.SSHPublicKey (not $b.LastSyncAt)}}
+<div class="banner banner-yellow">
+  <strong>Managed SSH key created — register it before running init.</strong>
+  Add the public key below as a <strong>write-enabled</strong> deploy key on the source repo and to the Gitea
+  account that owns the mirror, then click <em>Run init</em>.
+</div>
+{{end}}
 
 <section>
   <h2>Overview</h2>
@@ -35,6 +44,13 @@
     <tr><th>last sync</th><td>{{timefmt $b.LastSyncAt}} {{if $b.LastSyncOK}}{{if deref $b.LastSyncOK}}<span class="badge badge-success">ok</span>{{else}}<span class="badge badge-failed">failed</span>{{end}}{{end}}</td></tr>
     <tr><th>last verified</th><td>{{timefmt $b.LastVerifiedAt}} {{if $b.LastVerifyOK}}{{if deref $b.LastVerifyOK}}<span class="badge badge-success">clean</span>{{else}}<span class="badge badge-failed">LEAK</span>{{end}}{{end}}</td></tr>
     <tr><th>identity rewrite</th><td>{{if $b.PromoteName}}<code>{{$b.PromoteName}} &lt;{{$b.PromoteEmail}}&gt;</code>{{if $b.PromoteKeepTrailer}} + Co-authored-by{{end}}{{if $b.PromoteSignoff}} + signoff{{end}}{{else}}off (agent identity preserved){{end}}</td></tr>
+    <tr><th>ssh key</th><td>
+      {{if $b.SSHPublicKey}}
+        <div><code class="wrap">{{$b.SSHPublicKey}}</code>
+          <button type="button" class="btn" data-copy="{{$b.SSHPublicKey}}">copy</button></div>
+        <div class="muted">managed by Sluice — register as a write-enabled deploy key on the source and the Gitea mirror</div>
+      {{else}}mounted key (<code>~/.ssh/id_ed25519</code>){{end}}
+    </td></tr>
   </table>
 </section>
 

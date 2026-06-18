@@ -65,7 +65,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	runner := &execx.Runner{Log: func(s string) { f.logs.WriteString(s + "\n") }}
-	f.eng = New(f.workdir, "", runner)
+	f.eng = New(f.workdir, "", "", runner)
 	f.bridge = &Bridge{
 		Slug:            "test",
 		SourceRemoteURL: f.src,

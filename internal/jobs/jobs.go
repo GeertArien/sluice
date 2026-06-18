@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/geertarien/sluice/internal/execx"
 	"github.com/geertarien/sluice/internal/gitea"
 	"github.com/geertarien/sluice/internal/secrets"
+	"github.com/geertarien/sluice/internal/sshkey"
 	"github.com/geertarien/sluice/internal/store"
 )
 
@@ -220,7 +223,9 @@ func (s *Service) runtimeBridge(b *store.Bridge) (*engine.Bridge, string, error)
 }
 
 // EngineFor builds an engine whose output is appended to the given job log.
-// The decrypted token and webhook secret are registered as scrub targets.
+// The decrypted token, webhook secret and any per-bridge SSH key are
+// registered as scrub targets. A configured SSH key is materialized to a
+// 0600 file in the bridge workspace and used as ssh's sole identity.
 func (s *Service) EngineFor(b *store.Bridge, token string, logSink func(string)) *engine.Engine {
 	secretsToScrub := []string{token}
 	if len(b.WebhookSecretEnc) > 0 {
@@ -228,8 +233,25 @@ func (s *Service) EngineFor(b *store.Bridge, token string, logSink func(string))
 			secretsToScrub = append(secretsToScrub, ws)
 		}
 	}
+	sshKeyPath := ""
+	if len(b.SSHPrivateKeyEnc) > 0 {
+		if key, err := s.Box.Decrypt(b.SSHPrivateKeyEnc); err == nil {
+			secretsToScrub = append(secretsToScrub, key)
+			dir := filepath.Join(s.Workdir, b.Slug)
+			if err := os.MkdirAll(dir, 0o700); err == nil {
+				p := filepath.Join(dir, ".ssh_id")
+				if err := os.WriteFile(p, []byte(sshkey.EnsureTrailingNewline(key)), 0o600); err == nil {
+					sshKeyPath = p
+				} else {
+					logSink("warning: could not write per-bridge SSH key: " + err.Error())
+				}
+			}
+		} else {
+			logSink("warning: could not decrypt per-bridge SSH key: " + err.Error())
+		}
+	}
 	runner := &execx.Runner{Log: logSink, Secrets: secretsToScrub}
-	return engine.New(s.Workdir, s.KnownHosts, runner)
+	return engine.New(s.Workdir, s.KnownHosts, sshKeyPath, runner)
 }
 
 type promotePayload struct {

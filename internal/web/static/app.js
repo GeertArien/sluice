@@ -8,6 +8,17 @@ document.addEventListener("click", (e) => {
   });
 });
 
+// Copy buttons: copy the value of their data-copy attribute (e.g. SSH key).
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-copy]");
+  if (!btn) return;
+  navigator.clipboard.writeText(btn.getAttribute("data-copy")).then(() => {
+    const old = btn.textContent;
+    btn.textContent = "copied!";
+    setTimeout(() => { btn.textContent = old; }, 1000);
+  });
+});
+
 // Confirm dialogs restating exactly what will happen (spec §6).
 document.addEventListener("submit", (e) => {
   const form = e.target.closest("form[data-confirm]");
