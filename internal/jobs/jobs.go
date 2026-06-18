@@ -270,6 +270,7 @@ func (s *Service) runtimeBridge(b *store.Bridge) (*engine.Bridge, string, error)
 		PromoteEmail:       b.PromoteEmail,
 		PromoteKeepTrailer: b.PromoteKeepTrailer,
 		PromoteSignoff:     b.PromoteSignoff,
+		PromoteIgnorePaths: b.PromoteIgnorePaths,
 	}, token, nil
 }
 

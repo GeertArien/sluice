@@ -129,19 +129,23 @@ func (e *Engine) RunPreflight(ctx context.Context, b *Bridge, branch, base strin
 	}
 	pf.TipSHA, pf.BaseFiltered, pf.BaseReal = tip, baseFiltered, baseReal
 	clone := e.giteaClone(b)
+	ignore := b.ignorePathspec()
 
 	if pf.MergeCount, err = e.countRange(ctx, clone, baseFiltered+".."+tip, "--merges"); err != nil {
 		return nil, err
 	}
-	if pf.CommitCount, err = e.countRange(ctx, clone, baseFiltered+".."+tip); err != nil {
+	// CommitCount reflects what will actually be promoted: commits that still
+	// have changes after the promotion-ignored paths are excluded.
+	if pf.CommitCount, err = e.countRange(ctx, clone, baseFiltered+".."+tip, ignore...); err != nil {
 		return nil, err
 	}
 	if pf.Behind, err = e.countRange(ctx, clone, tip+"..origin/"+base); err != nil {
 		return nil, err
 	}
 
-	// Commit list for the preview.
-	out, err := e.Runner.Quiet(ctx, clone, "git", "log", "--reverse", "--format=%H%x1f%an <%ae>%x1f%s", baseFiltered+".."+tip)
+	// Commit list for the preview (also excluding ignored paths).
+	logArgs := append([]string{"log", "--reverse", "--format=%H%x1f%an <%ae>%x1f%s", baseFiltered + ".." + tip}, ignore...)
+	out, err := e.Runner.Quiet(ctx, clone, "git", logArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +155,8 @@ func (e *Engine) RunPreflight(ctx context.Context, b *Bridge, branch, base strin
 			continue
 		}
 		ci := CommitInfo{SHA: parts[0], Author: parts[1], Subject: parts[2]}
-		files, _ := e.Runner.Quiet(ctx, clone, "git", "show", "--name-only", "--format=", parts[0])
+		showArgs := append([]string{"show", "--name-only", "--format=", parts[0]}, ignore...)
+		files, _ := e.Runner.Quiet(ctx, clone, "git", showArgs...)
 		for _, f := range strings.Split(strings.TrimSpace(files), "\n") {
 			if f != "" {
 				ci.Files = append(ci.Files, f)
@@ -166,7 +171,8 @@ func (e *Engine) RunPreflight(ctx context.Context, b *Bridge, branch, base strin
 		return nil, err
 	}
 	defer os.RemoveAll(patchDir)
-	if _, err := e.Runner.Quiet(ctx, clone, "git", "format-patch", "--binary", "-o", patchDir, baseFiltered+".."+tip); err != nil {
+	fpArgs := append([]string{"format-patch", "--binary", "-o", patchDir, baseFiltered + ".." + tip}, ignore...)
+	if _, err := e.Runner.Quiet(ctx, clone, "git", fpArgs...); err != nil {
 		return nil, err
 	}
 	if gerr := GuardPatches(patchDir, b.ExcludedPaths); gerr != nil {
@@ -222,14 +228,18 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base, target st
 		return nil, &ErrRejected{Reason: "branch is even with " + base + " — nothing to promote"}
 	}
 
-	// 3. export
+	// 3. export (excluding promotion-ignored paths, e.g. mirror-only build helpers)
 	patchDir, err := e.tempDir(b, "patches")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(patchDir)
-	if _, err := e.Runner.Run(ctx, clone, "git", "format-patch", "--binary", "-o", patchDir, baseFiltered+".."+tip); err != nil {
+	fpArgs := append([]string{"format-patch", "--binary", "-o", patchDir, baseFiltered + ".." + tip}, b.ignorePathspec()...)
+	if _, err := e.Runner.Run(ctx, clone, "git", fpArgs...); err != nil {
 		return nil, fmt.Errorf("format-patch: %w", err)
+	}
+	if patches, _ := filepath.Glob(filepath.Join(patchDir, "*.patch")); len(patches) == 0 {
+		return nil, &ErrRejected{Reason: "nothing to promote — all changes are under promotion-ignored paths"}
 	}
 
 	// 4. SECURITY GUARD (spec §9.1: hard fail, no override)

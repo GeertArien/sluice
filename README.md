@@ -107,7 +107,9 @@ advisory scan.
   remote, pushed under the agent branch name by default (editable per
   promotion in the pre-flight screen) — patch-based: `format-patch` →
   security guard → `git am --3way`, optional identity rewrite with
-  preserved author dates and `Co-authored-by` trailers).
+  preserved author dates and `Co-authored-by` trailers). Optional
+  **promotion-ignored paths** keep mirror-only folders (e.g. build helpers)
+  from being carried back to the source.
   See [docs/promotion.md](docs/promotion.md) for the full flow with diagrams.
 - **Finalization** — detect that a promoted change landed upstream
   (ancestor check, then `git cherry` patch-id equivalence), close the Gitea

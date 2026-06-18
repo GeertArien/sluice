@@ -210,6 +210,54 @@ func TestSyncIsDeterministicAcrossExtendedHistory(t *testing.T) {
 	}
 }
 
+// --- promotion-ignored paths ---
+
+func TestPromoteStripsIgnoredPaths(t *testing.T) {
+	f := newFixture(t)
+	f.bridge.PromoteIgnorePaths = []string{"tooling"}
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "work")
+	// A mirror-only build helper (squash-merged in, so no merge commit) ...
+	f.commit(agent, "tooling/prebuilt.bin", "LIB\n", "add build helper")
+	// ... plus the agent's real change.
+	f.commit(agent, "public/feature.txt", "real work\n", "agent: feature")
+	f.git(agent, "push", "origin", "work")
+
+	res, err := f.eng.Promote(context.Background(), f.bridge, "work", "main", "")
+	if err != nil {
+		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
+	}
+	files := f.git(f.src, "ls-tree", "-r", "--name-only", res.RealBranch)
+	if !strings.Contains(files, "public/feature.txt") {
+		t.Fatalf("real change missing upstream:\n%s", files)
+	}
+	if strings.Contains(files, "tooling/") {
+		t.Fatalf("ignored path leaked to source:\n%s", files)
+	}
+}
+
+func TestPromoteRejectsWhenOnlyIgnoredPathsChanged(t *testing.T) {
+	f := newFixture(t)
+	f.bridge.PromoteIgnorePaths = []string{"tooling"}
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "buildonly")
+	f.commit(agent, "tooling/prebuilt.bin", "LIB\n", "add build helper")
+	f.git(agent, "push", "origin", "buildonly")
+
+	_, err := f.eng.Promote(context.Background(), f.bridge, "buildonly", "main", "")
+	var rej *ErrRejected
+	if !errors.As(err, &rej) || !strings.Contains(rej.Reason, "promotion-ignored") {
+		t.Fatalf("expected rejection (all changes ignored), got %v", err)
+	}
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "buildonly"); err == nil {
+		t.Fatal("nothing should have been pushed upstream")
+	}
+}
+
 // --- §13.3 round-trip ---
 
 func TestRoundTripPromotionPreservesAuthorAndExcludedFiles(t *testing.T) {

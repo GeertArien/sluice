@@ -33,7 +33,10 @@
     <label>Ref globs (comma separated) <input name="sync_globs" value="{{join $b.SyncGlobs ", "}}"></label>
     <label>Cron schedule <input name="schedule_cron" value="{{$b.ScheduleCron}}" placeholder="*/15 * * * *"></label>
   </fieldset>
-  <fieldset><legend>Promotion identity rewrite</legend>
+  <fieldset><legend>Promotion</legend>
+    <label>Promotion-ignored paths (one per line) <textarea name="promote_ignore_paths" rows="3" placeholder="tooling/prebuilt-libs">{{join $b.PromoteIgnorePaths "\n"}}</textarea>
+      <small>stripped from promotions to the source (mirror-only helpers). Agents must add them with
+      <code>git merge --squash</code>, not a merge commit. Not a security boundary.</small></label>
     <label>Name <input name="promote_name" value="{{$b.PromoteName}}"></label>
     <label>Email <input name="promote_email" value="{{$b.PromoteEmail}}"></label>
     <label class="check"><input type="checkbox" name="promote_keep_trailer" {{if $b.PromoteKeepTrailer}}checked{{end}}> add Co-authored-by trailer</label>
