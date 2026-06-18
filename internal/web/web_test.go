@@ -314,7 +314,8 @@ func TestTrustedHostsScanTrustAndDelete(t *testing.T) {
 	}
 	scanBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(scanBody), fp) {
+	// Unescape: a base64 fingerprint may contain '+', rendered as &#43;.
+	if !strings.Contains(html.UnescapeString(string(scanBody)), fp) {
 		t.Fatalf("scan page missing fingerprint %s:\n%s", fp, scanBody)
 	}
 
@@ -336,7 +337,7 @@ func TestTrustedHostsScanTrustAndDelete(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "127.0.0.1") {
 		t.Fatalf("known_hosts not rendered: err=%v contents=%q", err, data)
 	}
-	if !strings.Contains(string(body), fp) {
+	if !strings.Contains(html.UnescapeString(string(body)), fp) {
 		t.Fatal("hosts page does not list the trusted key")
 	}
 
