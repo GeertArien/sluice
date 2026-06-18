@@ -7,8 +7,9 @@
 //	SLUICE_LISTEN          listen address (default :8080)
 //	SLUICE_ADMIN_PASSWORD  admin login password (required)
 //	SLUICE_SECRET_KEY      64 hex chars; encrypts tokens/secrets at rest (required)
-//	SLUICE_KNOWN_HOSTS     pinned known_hosts file for SSH remotes (default
-//	                       $SLUICE_DATA_DIR/known_hosts if it exists)
+//	SLUICE_KNOWN_HOSTS     managed known_hosts file for SSH remotes (default
+//	                       $SLUICE_DATA_DIR/known_hosts); host keys are added
+//	                       via the Trusted hosts page and must be writable
 //	SLUICE_WORKERS         job worker pool size (default 4)
 package main
 
@@ -87,14 +88,11 @@ func run() error {
 		return fmt.Errorf("SLUICE_SECRET_KEY: %w", err)
 	}
 
+	// Sluice manages this known_hosts file (host keys are added via the UI);
+	// it always pins host keys (StrictHostKeyChecking=yes, spec §9.4).
 	knownHosts := os.Getenv("SLUICE_KNOWN_HOSTS")
 	if knownHosts == "" {
-		if def := filepath.Join(dataDir, "known_hosts"); fileExists(def) {
-			knownHosts = def
-		}
-	}
-	if knownHosts == "" {
-		log.Println("WARNING: no SLUICE_KNOWN_HOSTS configured; SSH host keys fall back to the system/user known_hosts")
+		knownHosts = filepath.Join(dataDir, "known_hosts")
 	}
 
 	st, err := store.Open(filepath.Join(dataDir, "sluice.db"))
@@ -107,6 +105,14 @@ func run() error {
 
 	workers, _ := strconv.Atoi(env("SLUICE_WORKERS", "4"))
 	svc := jobs.New(st, box, workdir, knownHosts, workers)
+	// Import any pre-existing known_hosts entries under management, then render
+	// the file from the database so the UI and disk stay in sync.
+	if err := svc.ImportKnownHosts(); err != nil {
+		log.Printf("warning: importing existing known_hosts: %v", err)
+	}
+	if err := svc.RenderKnownHosts(); err != nil {
+		log.Printf("warning: writing managed known_hosts at %s: %v (host pinning may not work until this is writable)", knownHosts, err)
+	}
 
 	srv, err := web.NewServer(st, box, svc, adminPassword)
 	if err != nil {
@@ -130,9 +136,4 @@ func run() error {
 		return err
 	}
 	return nil
-}
-
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }

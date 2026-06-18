@@ -23,6 +23,7 @@ import (
 	"github.com/geertarien/sluice/internal/engine"
 	"github.com/geertarien/sluice/internal/execx"
 	"github.com/geertarien/sluice/internal/gitea"
+	"github.com/geertarien/sluice/internal/hostkey"
 	"github.com/geertarien/sluice/internal/secrets"
 	"github.com/geertarien/sluice/internal/sshkey"
 	"github.com/geertarien/sluice/internal/store"
@@ -93,6 +94,56 @@ func (s *Service) BridgeLock(id int64) *sync.Mutex {
 		s.bridgeLocks[id] = &sync.Mutex{}
 	}
 	return s.bridgeLocks[id]
+}
+
+// ImportKnownHosts brings any entries already present in the managed
+// known_hosts file under database management (idempotent), so an existing
+// hand-maintained file is preserved when host-key management is enabled.
+func (s *Service) ImportKnownHosts() error {
+	if s.KnownHosts == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.KnownHosts)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, raw := range strings.Split(string(data), "\n") {
+		host, kt, fp, ok := hostkey.ParseLine(raw)
+		if !ok {
+			continue
+		}
+		_ = s.Store.AddHostKey(&store.HostKey{Host: host, KeyType: kt, Fingerprint: fp, Line: strings.TrimSpace(raw)})
+	}
+	return nil
+}
+
+// RenderKnownHosts (re)writes the managed known_hosts file from the database,
+// atomically. Call after any change to trusted host keys.
+func (s *Service) RenderKnownHosts() error {
+	if s.KnownHosts == "" {
+		return nil
+	}
+	keys, err := s.Store.HostKeys()
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("# Managed by Sluice — add or remove trusted hosts in the web UI.\n")
+	for _, k := range keys {
+		b.WriteString(k.Line)
+		b.WriteString("\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.KnownHosts), 0o755); err != nil {
+		return err
+	}
+	tmp := s.KnownHosts + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.KnownHosts)
 }
 
 // Start launches the worker pool and the cron scheduler.

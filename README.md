@@ -37,26 +37,25 @@ source, runs the first filtered sync, and runs the **leak-check
 verification** — the bridge stays paused until you review the result and
 activate it.
 
-For SSH remotes you provide the key one of two ways, plus a pinned
-`known_hosts` file (Sluice never uses `StrictHostKeyChecking=no`):
+SSH remotes need two things: a key, and trusted host keys (Sluice pins host
+keys and never uses `StrictHostKeyChecking=no`).
 
-**Managed key (recommended).** On the **SSH keys** page, generate a named
-ed25519 keypair (or paste an existing one). Sluice stores the private key
-encrypted at rest and shows the public key to register as a **write-enabled**
-deploy key on the source and the Gitea mirror. Each bridge then selects a named
-key from a dropdown, so one key can be reused across bridges (or use a separate
-key per source). The selected key is used as ssh's sole identity — no file
-mounting needed. You still provide `known_hosts`:
+**Host keys — Trusted hosts page.** Sluice manages `known_hosts` for you at
+`$SLUICE_DATA_DIR/known_hosts` (on the data volume — don't mount it read-only).
+On the **Trusted hosts** page, scan your source and Gitea hosts, verify the
+SHA256 fingerprints against what the provider publishes, and trust them. Any
+entries already in the file are imported under management on startup.
+
+**Key — SSH keys page (recommended).** Generate a named ed25519 keypair (or
+paste an existing one). Sluice stores the private key encrypted at rest and
+shows the public key to register as a **write-enabled** deploy key on the
+source and the Gitea mirror. Each bridge selects a named key from a dropdown,
+so one key can be reused across bridges (or use a separate key per source).
+
+**Mounted key (fallback).** If a bridge selects no managed key, ssh uses the
+container's default identity, so you can instead mount one key for all bridges:
 
 ```sh
-  -v $PWD/known_hosts:/data/known_hosts:ro
-```
-
-**Mounted key (fallback).** If a bridge has no managed key, ssh uses the
-container's default identity, so you can instead mount a key for all bridges:
-
-```sh
-  -v $PWD/known_hosts:/data/known_hosts:ro \
   -v $PWD/id_ed25519:/home/sluice/.ssh/id_ed25519:ro
 ```
 
@@ -87,7 +86,7 @@ are responsible for the mounted data dir being writable by that user.
 | `SLUICE_SECRET_KEY` | *(required)* | 64 hex chars; encrypts Gitea tokens & webhook secrets at rest (NaCl secretbox) |
 | `SLUICE_DATA_DIR` | `data` | SQLite DB + per-bridge workspaces |
 | `SLUICE_LISTEN` | `:8080` | listen address |
-| `SLUICE_KNOWN_HOSTS` | `$SLUICE_DATA_DIR/known_hosts` if present | pinned SSH host keys for source + Gitea |
+| `SLUICE_KNOWN_HOSTS` | `$SLUICE_DATA_DIR/known_hosts` | managed pinned SSH host keys (edited via the Trusted hosts page; must be writable) |
 | `SLUICE_WORKERS` | `4` | job worker pool size |
 | `PUID` / `PGID` | `1000` / `1000` | user/group the app runs as; set to the owner of the mounted data dir (unraid: `99`/`100`) |
 

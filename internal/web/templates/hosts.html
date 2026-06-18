@@ -1,0 +1,68 @@
+{{template "head" .}}
+<div class="pagehead">
+  <h1>Trusted hosts</h1>
+</div>
+<p class="muted">Sluice pins SSH host keys (<code>StrictHostKeyChecking=yes</code>) and only connects to
+hosts listed here. Scan a host, verify the fingerprint against what the provider publishes, then trust it.
+Managed file: <code>{{.KnownHostsPath}}</code>.</p>
+
+{{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+
+{{if .Discovered}}
+<div class="banner banner-yellow">
+  <strong>Review host keys for <code>{{.ScanLabel}}</code>.</strong>
+  Compare these SHA256 fingerprints with the provider's published values before trusting.
+</div>
+<form method="post" action="/hosts" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <table>
+    <tr><th>type</th><th>fingerprint</th></tr>
+    {{range .Discovered}}
+    <tr>
+      <td><code>{{.Type}}</code></td>
+      <td><code class="wrap">{{.Fingerprint}}</code></td>
+      <input type="hidden" name="line" value="{{.Line}}">
+    </tr>
+    {{end}}
+  </table>
+  <button type="submit" class="primary">Trust {{len .Discovered}} key(s)</button>
+  <a class="btn" href="/hosts">Cancel</a>
+</form>
+{{else}}
+<section>
+  <h2>Scan a host</h2>
+  <form method="post" action="/hosts/scan" class="inline-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input name="host" value="{{.ScanHost}}" placeholder="bitbucket.org" required>
+    <input name="port" value="{{if .ScanPort}}{{.ScanPort}}{{end}}" placeholder="22" size="6">
+    <button type="submit">Scan</button>
+  </form>
+</section>
+{{end}}
+
+<section class="mt">
+  <h2>Trusted</h2>
+  {{if not .Hosts}}
+  <div class="empty">No hosts trusted yet. Scan your source and Gitea hosts above so Sluice can connect to them.</div>
+  {{else}}
+  <table>
+    <tr><th>host</th><th>type</th><th>fingerprint</th><th>added</th><th></th></tr>
+    {{range .Hosts}}
+    <tr>
+      <td><code>{{.Host}}</code></td>
+      <td><code>{{.KeyType}}</code></td>
+      <td><code class="wrap">{{.Fingerprint}}</code></td>
+      <td>{{.CreatedAt.Local.Format "2006-01-02"}}</td>
+      <td>
+        <form method="post" action="/hosts/{{.ID}}/delete" class="inline"
+              data-confirm="Stop trusting {{.Host}} ({{.KeyType}})? Connections to it will fail until re-added.">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button class="dangerbtn">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+</section>
+{{template "foot" .}}

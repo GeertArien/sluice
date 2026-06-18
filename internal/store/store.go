@@ -103,6 +103,14 @@ CREATE TABLE IF NOT EXISTS ssh_keys (
   private_key_enc BLOB NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS host_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host TEXT NOT NULL,
+  key_type TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  line TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `)
 	if err != nil {
 		return err
@@ -399,6 +407,47 @@ func (s *Store) BridgesUsingSSHKey(id int64) ([]string, error) {
 
 func (s *Store) DeleteSSHKey(id int64) error {
 	_, err := s.DB.Exec(`DELETE FROM ssh_keys WHERE id=?`, id)
+	return err
+}
+
+// ---------- host keys (pinned known_hosts entries, managed via the UI) ----------
+
+type HostKey struct {
+	ID          int64
+	Host        string
+	KeyType     string
+	Fingerprint string
+	Line        string
+	CreatedAt   time.Time
+}
+
+// AddHostKey inserts a host key, ignoring duplicates (by known_hosts line) so
+// import and re-trust are idempotent.
+func (s *Store) AddHostKey(k *HostKey) error {
+	_, err := s.DB.Exec(`INSERT OR IGNORE INTO host_keys (host, key_type, fingerprint, line) VALUES (?,?,?,?)`,
+		k.Host, k.KeyType, k.Fingerprint, k.Line)
+	return err
+}
+
+func (s *Store) HostKeys() ([]*HostKey, error) {
+	rows, err := s.DB.Query(`SELECT id, host, key_type, fingerprint, line, created_at FROM host_keys ORDER BY host, key_type`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*HostKey
+	for rows.Next() {
+		k := &HostKey{}
+		if err := rows.Scan(&k.ID, &k.Host, &k.KeyType, &k.Fingerprint, &k.Line, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteHostKey(id int64) error {
+	_, err := s.DB.Exec(`DELETE FROM host_keys WHERE id=?`, id)
 	return err
 }
 

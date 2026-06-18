@@ -14,6 +14,7 @@ import (
 
 	"github.com/geertarien/sluice/internal/engine"
 	"github.com/geertarien/sluice/internal/gitea"
+	"github.com/geertarien/sluice/internal/hostkey"
 	"github.com/geertarien/sluice/internal/jobs"
 	"github.com/geertarien/sluice/internal/sshkey"
 	"github.com/geertarien/sluice/internal/store"
@@ -667,4 +668,97 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(0, "admin", "ssh_key_deleted", map[string]any{"id": id})
 	http.Redirect(w, r, "/keys", http.StatusSeeOther)
+}
+
+// ---------- trusted hosts (pinned known_hosts entries) ----------
+
+func (s *Server) renderHosts(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	keys, err := s.Store.HostKeys()
+	if err != nil {
+		httpError(w, 500, "load host keys: %v", err)
+		return
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["Hosts"] = keys
+	data["KnownHostsPath"] = s.Jobs.KnownHosts
+	s.renderPage(w, r, "hosts.html", data)
+}
+
+func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
+	s.renderHosts(w, r, nil)
+}
+
+func (s *Server) handleHostScan(w http.ResponseWriter, r *http.Request) {
+	host := strings.TrimSpace(r.PostFormValue("host"))
+	if host == "" {
+		s.renderHosts(w, r, map[string]any{"Error": "enter a host to scan"})
+		return
+	}
+	port := 22
+	if p := strings.TrimSpace(r.PostFormValue("port")); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			s.renderHosts(w, r, map[string]any{"Error": "port must be 1-65535", "ScanHost": host})
+			return
+		}
+		port = n
+	}
+	keys, err := hostkey.Scan(host, port, 6*time.Second)
+	if err != nil {
+		s.renderHosts(w, r, map[string]any{"Error": "scan failed: " + err.Error(), "ScanHost": host, "ScanPort": port})
+		return
+	}
+	label := host
+	if port != 22 {
+		label = host + ":" + strconv.Itoa(port)
+	}
+	s.renderHosts(w, r, map[string]any{"Discovered": keys, "ScanLabel": label})
+}
+
+func (s *Server) handleHostTrust(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		httpError(w, 400, "bad form")
+		return
+	}
+	lines := r.PostForm["line"]
+	if len(lines) == 0 {
+		s.renderHosts(w, r, map[string]any{"Error": "nothing to trust"})
+		return
+	}
+	added := 0
+	for _, line := range lines {
+		host, kt, fp, ok := hostkey.ParseLine(line)
+		if !ok {
+			continue
+		}
+		if err := s.Store.AddHostKey(&store.HostKey{Host: host, KeyType: kt, Fingerprint: fp, Line: strings.TrimSpace(line)}); err == nil {
+			added++
+		}
+	}
+	if err := s.Jobs.RenderKnownHosts(); err != nil {
+		s.renderHosts(w, r, map[string]any{"Error": "saved, but writing known_hosts failed: " + err.Error()})
+		return
+	}
+	s.Store.Audit(0, "admin", "host_keys_trusted", map[string]any{"added": added})
+	http.Redirect(w, r, "/hosts", http.StatusSeeOther)
+}
+
+func (s *Server) handleHostDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.Store.DeleteHostKey(id); err != nil {
+		httpError(w, 500, "delete host key: %v", err)
+		return
+	}
+	if err := s.Jobs.RenderKnownHosts(); err != nil {
+		httpError(w, 500, "rewrite known_hosts: %v", err)
+		return
+	}
+	s.Store.Audit(0, "admin", "host_key_deleted", map[string]any{"id": id})
+	http.Redirect(w, r, "/hosts", http.StatusSeeOther)
 }

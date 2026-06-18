@@ -120,6 +120,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /keys", s.auth(s.handleSSHKeys))
 	s.mux.HandleFunc("POST /keys", s.auth(s.handleSSHKeyCreate))
 	s.mux.HandleFunc("POST /keys/{id}/delete", s.auth(s.handleSSHKeyDelete))
+	s.mux.HandleFunc("GET /hosts", s.auth(s.handleHosts))
+	s.mux.HandleFunc("POST /hosts/scan", s.auth(s.handleHostScan))
+	s.mux.HandleFunc("POST /hosts", s.auth(s.handleHostTrust))
+	s.mux.HandleFunc("POST /hosts/{id}/delete", s.auth(s.handleHostDelete))
 	s.mux.HandleFunc("POST /hooks/{slug}", s.handleWebhook) // secret-authenticated, no session
 }
 
