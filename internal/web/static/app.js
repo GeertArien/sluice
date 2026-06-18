@@ -1,22 +1,52 @@
+// Copy helper. navigator.clipboard only exists in a secure context
+// (HTTPS or localhost); Sluice is often served over plain http://<lan-ip>,
+// so fall back to a temporary textarea + execCommand("copy").
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (_) {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error("copy failed"));
+  });
+}
+
+function flash(el, text) {
+  const old = el.textContent;
+  el.textContent = text;
+  setTimeout(() => { el.textContent = old; }, 1000);
+}
+
 // Click-to-copy SHAs (spec §6).
 document.addEventListener("click", (e) => {
   const el = e.target.closest(".sha");
   if (!el) return;
-  navigator.clipboard.writeText(el.dataset.sha || el.textContent).then(() => {
+  copyText(el.dataset.sha || el.textContent).then(() => {
     el.classList.add("copied");
     setTimeout(() => el.classList.remove("copied"), 800);
-  });
+  }).catch(() => {});
 });
 
 // Copy buttons: copy the value of their data-copy attribute (e.g. SSH key).
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-copy]");
   if (!btn) return;
-  navigator.clipboard.writeText(btn.getAttribute("data-copy")).then(() => {
-    const old = btn.textContent;
-    btn.textContent = "copied!";
-    setTimeout(() => { btn.textContent = old; }, 1000);
-  });
+  copyText(btn.getAttribute("data-copy"))
+    .then(() => flash(btn, "copied!"))
+    .catch(() => flash(btn, "copy failed"));
 });
 
 // Confirm dialogs restating exactly what will happen (spec §6).
