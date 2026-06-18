@@ -45,6 +45,22 @@ For SSH remotes, mount an SSH key for the container user and a pinned
   -v $PWD/id_ed25519:/home/sluice/.ssh/id_ed25519:ro
 ```
 
+### Running on a bind-mounted volume (unraid / NAS)
+
+The container starts as root, takes ownership of the data directory, then
+drops to an unprivileged user. On a host where the data folder is owned by a
+specific account (unraid's appdata share is `nobody:users` = `99:100`), set
+`PUID`/`PGID` to that account so the files Sluice writes are owned correctly:
+
+```sh
+  -e PUID=99 -e PGID=100 \
+  -v /mnt/user/appdata/sluice:/data
+```
+
+`PUID`/`PGID` default to `1000:1000`. If you instead pin the container user
+yourself (`docker run --user 99:100`), the entrypoint skips the remap and you
+are responsible for the mounted data dir being writable by that user.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -55,6 +71,7 @@ For SSH remotes, mount an SSH key for the container user and a pinned
 | `SLUICE_LISTEN` | `:8080` | listen address |
 | `SLUICE_KNOWN_HOSTS` | `$SLUICE_DATA_DIR/known_hosts` if present | pinned SSH host keys for source + Gitea |
 | `SLUICE_WORKERS` | `4` | job worker pool size |
+| `PUID` / `PGID` | `1000` / `1000` | user/group the app runs as; set to the owner of the mounted data dir (unraid: `99`/`100`) |
 
 Sluice validates at startup that `git >= 2.32` and `git-filter-repo` are on
 `PATH`. If `gitleaks` is installed it runs during verification as an
