@@ -19,10 +19,14 @@ func TestEngineForMaterializesPerBridgeSSHKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	enc, _ := box.Encrypt(priv)
+	key := &store.SSHKey{Name: "named", PublicKey: "ssh-ed25519 AAAA", PrivateKeyEnc: enc}
+	if err := st.CreateSSHKey(key); err != nil {
+		t.Fatal(err)
+	}
 	b := &store.Bridge{
 		Name: "k", Slug: "k", SourceRemoteURL: "/x", GiteaBaseURL: "http://g",
 		GiteaOwner: "o", GiteaRepo: "r", GiteaSSHURL: "/g",
-		SSHPrivateKeyEnc: enc, Status: "active",
+		SSHKeyID: &key.ID, Status: "active",
 	}
 	if err := st.CreateBridge(b); err != nil {
 		t.Fatal(err)

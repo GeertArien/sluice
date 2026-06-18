@@ -40,23 +40,13 @@
     <label class="check"><input type="checkbox" name="promote_signoff" {{if $b.PromoteSignoff}}checked{{end}}> add Signed-off-by on apply</label>
   </fieldset>
   <fieldset><legend>SSH key (source clone/push + Gitea push)</legend>
-    <p class="muted">Current:
-      {{if $b.SSHPublicKey}}
-        managed key — <code class="wrap">{{$b.SSHPublicKey}}</code>
-        <button type="button" class="btn" data-copy="{{$b.SSHPublicKey}}">copy</button>
-      {{else}}mounted key (<code>~/.ssh/id_ed25519</code>){{end}}
-    </p>
-    <label>Change
-      <select name="ssh_key_mode">
-        <option value="keep">Keep current</option>
-        <option value="generate">Generate a new keypair</option>
-        <option value="paste">Paste an existing private key</option>
-        <option value="remove">Remove (fall back to the mounted key)</option>
+    <label>Key
+      <select name="ssh_key_id">
+        <option value="">Use the mounted key (~/.ssh/id_ed25519)</option>
+        {{range .SSHKeys}}<option value="{{.ID}}" {{if and $b.SSHKeyID (eq .ID (deref_i $b.SSHKeyID))}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
     </label>
-    <label>Private key <span class="muted">(only for “Paste”)</span>
-      <textarea name="ssh_private_key" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
-    <small>Generating or pasting replaces the key — you must re-register the new public key on the source and Gitea.</small>
+    <small>Manage named keys on the <a href="/keys">SSH keys</a> page.</small>
   </fieldset>
   <button type="submit">Save settings</button>
 </form>

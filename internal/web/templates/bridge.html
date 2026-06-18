@@ -25,9 +25,9 @@
 {{if $b.LastVerifyOK}}{{if not (deref $b.LastVerifyOK)}}
 <div class="banner banner-red"><strong>Last verification FAILED — possible leak in the filtered mirror.</strong> Check the latest verify job log.</div>
 {{end}}{{end}}
-{{if and $b.SSHPublicKey (not $b.LastSyncAt)}}
+{{if and .SSHKey (not $b.LastSyncAt)}}
 <div class="banner banner-yellow">
-  <strong>Managed SSH key created — register it before running init.</strong>
+  <strong>This bridge uses a managed SSH key — register it before running init.</strong>
   Add the public key below as a <strong>write-enabled</strong> deploy key on the source repo and to the Gitea
   account that owns the mirror, then click <em>Run init</em>.
 </div>
@@ -45,10 +45,11 @@
     <tr><th>last verified</th><td>{{timefmt $b.LastVerifiedAt}} {{if $b.LastVerifyOK}}{{if deref $b.LastVerifyOK}}<span class="badge badge-success">clean</span>{{else}}<span class="badge badge-failed">LEAK</span>{{end}}{{end}}</td></tr>
     <tr><th>identity rewrite</th><td>{{if $b.PromoteName}}<code>{{$b.PromoteName}} &lt;{{$b.PromoteEmail}}&gt;</code>{{if $b.PromoteKeepTrailer}} + Co-authored-by{{end}}{{if $b.PromoteSignoff}} + signoff{{end}}{{else}}off (agent identity preserved){{end}}</td></tr>
     <tr><th>ssh key</th><td>
-      {{if $b.SSHPublicKey}}
-        <div><code class="wrap">{{$b.SSHPublicKey}}</code>
-          <button type="button" class="btn" data-copy="{{$b.SSHPublicKey}}">copy</button></div>
-        <div class="muted">managed by Sluice — register as a write-enabled deploy key on the source and the Gitea mirror</div>
+      {{if .SSHKey}}
+        <div><strong>{{.SSHKey.Name}}</strong> <a class="muted" href="/keys">(manage)</a></div>
+        <div><code class="wrap">{{.SSHKey.PublicKey}}</code>
+          <button type="button" class="btn" data-copy="{{.SSHKey.PublicKey}}">copy</button></div>
+        <div class="muted">register as a write-enabled deploy key on the source and the Gitea mirror</div>
       {{else}}mounted key (<code>~/.ssh/id_ed25519</code>){{end}}
     </td></tr>
   </table>

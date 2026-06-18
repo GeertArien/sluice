@@ -234,20 +234,24 @@ func (s *Service) EngineFor(b *store.Bridge, token string, logSink func(string))
 		}
 	}
 	sshKeyPath := ""
-	if len(b.SSHPrivateKeyEnc) > 0 {
-		if key, err := s.Box.Decrypt(b.SSHPrivateKeyEnc); err == nil {
-			secretsToScrub = append(secretsToScrub, key)
-			dir := filepath.Join(s.Workdir, b.Slug)
-			if err := os.MkdirAll(dir, 0o700); err == nil {
-				p := filepath.Join(dir, ".ssh_id")
-				if err := os.WriteFile(p, []byte(sshkey.EnsureTrailingNewline(key)), 0o600); err == nil {
-					sshKeyPath = p
-				} else {
-					logSink("warning: could not write per-bridge SSH key: " + err.Error())
+	if b.SSHKeyID != nil {
+		if k, err := s.Store.SSHKeyByID(*b.SSHKeyID); err == nil {
+			if key, derr := s.Box.Decrypt(k.PrivateKeyEnc); derr == nil {
+				secretsToScrub = append(secretsToScrub, key)
+				dir := filepath.Join(s.Workdir, b.Slug)
+				if err := os.MkdirAll(dir, 0o700); err == nil {
+					p := filepath.Join(dir, ".ssh_id")
+					if err := os.WriteFile(p, []byte(sshkey.EnsureTrailingNewline(key)), 0o600); err == nil {
+						sshKeyPath = p
+					} else {
+						logSink("warning: could not write SSH key: " + err.Error())
+					}
 				}
+			} else {
+				logSink("warning: could not decrypt SSH key: " + derr.Error())
 			}
 		} else {
-			logSink("warning: could not decrypt per-bridge SSH key: " + err.Error())
+			logSink("warning: bridge references a missing SSH key; falling back to the mounted identity")
 		}
 	}
 	runner := &execx.Runner{Log: logSink, Secrets: secretsToScrub}

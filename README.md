@@ -40,12 +40,13 @@ activate it.
 For SSH remotes you provide the key one of two ways, plus a pinned
 `known_hosts` file (Sluice never uses `StrictHostKeyChecking=no`):
 
-**Managed key (recommended).** On the bridge create/settings page choose
-"Generate a new keypair" (or paste an existing one). Sluice stores the private
-key encrypted at rest and shows the public key to register as a
-**write-enabled** deploy key on the source and the Gitea mirror. A managed key
-is per-bridge and used as ssh's sole identity — no file mounting needed. You
-still provide `known_hosts`:
+**Managed key (recommended).** On the **SSH keys** page, generate a named
+ed25519 keypair (or paste an existing one). Sluice stores the private key
+encrypted at rest and shows the public key to register as a **write-enabled**
+deploy key on the source and the Gitea mirror. Each bridge then selects a named
+key from a dropdown, so one key can be reused across bridges (or use a separate
+key per source). The selected key is used as ssh's sole identity — no file
+mounting needed. You still provide `known_hosts`:
 
 ```sh
   -v $PWD/known_hosts:/data/known_hosts:ro

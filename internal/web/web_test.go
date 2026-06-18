@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -192,11 +193,40 @@ func TestPagesRenderAndAuthIsEnforced(t *testing.T) {
 	}
 }
 
-func TestCreateBridgeWithGeneratedKeySkipsAutoInit(t *testing.T) {
+func TestGenerateKeyThenSelectOnBridgeSkipsAutoInit(t *testing.T) {
 	ts, client, st := setup(t)
 	csrf := login(t, ts, client)
 
-	form := url.Values{
+	// Generate a named key on the keys page.
+	resp, err := client.PostForm(ts.URL+"/keys", url.Values{
+		"csrf": {csrf}, "name": {"shared-deploy"}, "mode": {"generate"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keysBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("key create returned %d:\n%s", resp.StatusCode, keysBody)
+	}
+	keys, _ := st.SSHKeys()
+	if len(keys) != 1 || !strings.HasPrefix(keys[0].PublicKey, "ssh-ed25519 ") {
+		t.Fatalf("named key not stored: %+v", keys)
+	}
+	key := keys[0]
+	// Keys page shows the public key but never the private key material.
+	// (HTML-unescape first: html/template encodes '+' as &#43; etc.)
+	keysText := html.UnescapeString(string(keysBody))
+	if !strings.Contains(keysText, key.PublicKey) {
+		t.Fatal("keys page missing public key")
+	}
+	priv, _ := secrets.New(strings.Repeat("ef", 32))
+	if pk, _ := priv.Decrypt(key.PrivateKeyEnc); pk == "" || strings.Contains(keysText, pk) {
+		t.Fatal("private key leaked on keys page")
+	}
+
+	// Create a bridge that selects the named key.
+	resp, err = client.PostForm(ts.URL+"/bridges", url.Values{
 		"csrf":              {csrf},
 		"name":              {"Keyed"},
 		"slug":              {"keyed"},
@@ -207,9 +237,8 @@ func TestCreateBridgeWithGeneratedKeySkipsAutoInit(t *testing.T) {
 		"gitea_token":       {"tok"},
 		"excluded_paths":    {"secret"},
 		"sync_branches":     {"main"},
-		"ssh_key_mode":      {"generate"},
-	}
-	resp, err := client.PostForm(ts.URL+"/bridges", form)
+		"ssh_key_id":        {strconv.FormatInt(key.ID, 10)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +247,7 @@ func TestCreateBridgeWithGeneratedKeySkipsAutoInit(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("create returned %d:\n%s", resp.StatusCode, body)
 	}
-	// Should have landed on the bridge page (generated key), not a job page.
+	// Lands on the bridge page (managed key), not a job page.
 	if !strings.Contains(resp.Request.URL.Path, "/bridges/keyed") {
 		t.Fatalf("expected redirect to bridge page, got %s", resp.Request.URL.Path)
 	}
@@ -227,27 +256,33 @@ func TestCreateBridgeWithGeneratedKeySkipsAutoInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.SSHPrivateKeyEnc) == 0 || !strings.HasPrefix(b.SSHPublicKey, "ssh-ed25519 ") {
-		t.Fatalf("managed key not stored: pub=%q", b.SSHPublicKey)
+	if b.SSHKeyID == nil || *b.SSHKeyID != key.ID {
+		t.Fatalf("bridge not linked to the named key: %v", b.SSHKeyID)
 	}
-	// No init job should have been enqueued — the key must be registered first.
+	// No init job — the key must be registered first.
 	jobsList, _ := st.JobsForBridge(b.ID, 10)
 	if len(jobsList) != 0 {
 		t.Fatalf("expected no auto-init job, got %d", len(jobsList))
 	}
-	// The bridge page shows the public key and a Run init action.
-	if !strings.Contains(string(body), b.SSHPublicKey) || !strings.Contains(string(body), "Run init") {
-		t.Fatal("bridge page missing public key or Run init button")
+	// Bridge page shows the key name, its public key, and a Run init action.
+	bridgeText := html.UnescapeString(string(body))
+	if !strings.Contains(bridgeText, key.PublicKey) || !strings.Contains(bridgeText, "Run init") || !strings.Contains(bridgeText, "shared-deploy") {
+		t.Fatal("bridge page missing key details or Run init button")
 	}
-	// The private key must never be rendered.
-	if priv, _ := setupBox().Decrypt(b.SSHPrivateKeyEnc); strings.Contains(string(body), "BEGIN OPENSSH PRIVATE KEY") || (priv != "" && strings.Contains(string(body), priv)) {
-		t.Fatal("private key leaked into the page")
-	}
-}
 
-func setupBox() *secrets.Box {
-	box, _ := secrets.New(strings.Repeat("ef", 32))
-	return box
+	// A key in use cannot be deleted.
+	resp, err = client.PostForm(ts.URL+"/keys/"+strconv.FormatInt(key.ID, 10)+"/delete", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(delBody), "cannot delete") {
+		t.Fatal("expected in-use key deletion to be blocked")
+	}
+	if keys, _ := st.SSHKeys(); len(keys) != 1 {
+		t.Fatal("in-use key was deleted")
+	}
 }
 
 func TestWebhookSecretAuth(t *testing.T) {
