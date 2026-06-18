@@ -91,8 +91,10 @@ Step by step, exactly as the code runs it:
    `git push --force gitea <glob>:<glob>`, best-effort (a glob may match
    nothing, which is not an error).
 9. **Finalization pass** — after a successful sync the job runs finalization
-   (detects promotions that have landed upstream and cleans them up). See
-   [promotion/finalization docs] — covered separately.
+   (detects promotions that have landed upstream and cleans them up).
+   Promotion (the **Gitea → source** return path, including the
+   `git push` of the branch to the source remote) and finalization are
+   separate operations — see [spec §12.2–12.3](../spec.md).
 
 The force-push is safe specifically because filter-repo is **deterministic**
 (next section).
