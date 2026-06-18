@@ -35,7 +35,11 @@ docs/private">{{.Form.Get "excluded_paths"}}</textarea>
     <label>Ref globs (comma separated, optional) <input name="sync_globs" value="{{.Form.Get "sync_globs"}}" placeholder="refs/heads/release/*"></label>
     <label>Cron schedule (optional) <input name="schedule_cron" value="{{.Form.Get "schedule_cron"}}" placeholder="*/15 * * * *"></label>
   </fieldset>
-  <fieldset><legend>Promotion identity rewrite (optional)</legend>
+  <fieldset><legend>Promotion (optional)</legend>
+    <label>Promotion-ignored paths (one per line) <textarea name="promote_ignore_paths" rows="3" placeholder="tooling/prebuilt-libs">{{.Form.Get "promote_ignore_paths"}}</textarea>
+      <small>folders that may exist on the Gitea mirror but are <strong>stripped from promotions</strong> to the
+      source (e.g. mirror-only build helpers). Agents must add them without a merge commit — use
+      <code>git merge --squash</code>. Not a security boundary; keep secrets in excluded paths.</small></label>
     <label>Committer/author name <input name="promote_name" value="{{.Form.Get "promote_name"}}" placeholder="AI Contributions"></label>
     <label>Committer/author email <input name="promote_email" value="{{.Form.Get "promote_email"}}" placeholder="ai@corp.example"></label>
     <label class="check"><input type="checkbox" name="promote_keep_trailer" checked> add Co-authored-by trailer with the original agent identity</label>

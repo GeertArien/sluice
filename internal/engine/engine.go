@@ -33,6 +33,23 @@ type Bridge struct {
 	PromoteEmail       string
 	PromoteKeepTrailer bool
 	PromoteSignoff     bool
+	// PromoteIgnorePaths are dropped from the patches a promotion applies to
+	// the source (e.g. mirror-only build helpers). They stay on the mirror.
+	PromoteIgnorePaths []string
+}
+
+// ignorePathspec turns the promotion-ignored paths into a git pathspec that
+// keeps everything except those paths (`-- . :(exclude)<p>…`); nil when the
+// list is empty so existing behavior is unchanged.
+func (b *Bridge) ignorePathspec() []string {
+	if len(b.PromoteIgnorePaths) == 0 {
+		return nil
+	}
+	args := []string{"--", "."}
+	for _, p := range b.PromoteIgnorePaths {
+		args = append(args, ":(exclude)"+p)
+	}
+	return args
 }
 
 // Engine executes git operations for one bridge within its workspace.

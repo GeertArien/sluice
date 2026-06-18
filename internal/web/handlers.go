@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -111,6 +112,7 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	b.PromoteEmail = strings.TrimSpace(r.PostFormValue("promote_email"))
 	b.PromoteKeepTrailer = r.PostFormValue("promote_keep_trailer") == "on"
 	b.PromoteSignoff = r.PostFormValue("promote_signoff") == "on"
+	b.PromoteIgnorePaths = splitList(r.PostFormValue("promote_ignore_paths"))
 	b.ScheduleCron = strings.TrimSpace(r.PostFormValue("schedule_cron"))
 
 	if b.Name == "" || b.SourceRemoteURL == "" || b.GiteaBaseURL == "" || b.GiteaOwner == "" || b.GiteaRepo == "" {
@@ -121,6 +123,11 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	}
 	if err := engine.ValidateExcludedPaths(b.ExcludedPaths); err != nil {
 		return err
+	}
+	for _, p := range b.PromoteIgnorePaths {
+		if err := engine.ValidateExcludedPath(p); err != nil {
+			return fmt.Errorf("promotion-ignored path: %w", err)
+		}
 	}
 	if b.PromoteName != "" && b.PromoteEmail == "" {
 		return errors.New("promote email is required when a promote name is set")

@@ -107,6 +107,38 @@ Step by step (`Engine.Promote`):
 > path cannot leak excluded content, and sync (the only Gitea writer) and
 > promotion stay separate by construction.
 
+## Promotion-ignored paths
+
+A bridge may list **promotion-ignored paths** — folders that can live on the
+Gitea mirror but must never be carried back to the source (typically
+mirror-only build helpers: a script plus prebuilt libraries that let agents
+build an app whose real dependencies were filtered out of the mirror).
+
+When set, the export step adds a git pathspec so those paths are excluded
+from the generated patches:
+
+```
+git format-patch --binary -o <tmp> <base>..<tip> -- . ':(exclude)<path>'…
+```
+
+Git's history simplification drops commits that touched **only** ignored
+paths and trims ignored changes out of mixed commits, so the source receives
+the agent's real work and never the ignored folders. If *every* change is
+under an ignored path, the promotion is rejected cleanly ("nothing to
+promote"). The pre-flight commit list and counts reflect the post-exclusion
+result, so the operator sees exactly what will land.
+
+Two important properties:
+
+- **It is not a security boundary.** Ignored folders are visible to agents on
+  the mirror; this only stops them flowing *back*. Secrets still belong in
+  excluded paths (the history-level, guarded boundary). Changing the ignore
+  list needs no re-sync — it only affects future promotions.
+- **Agents must add the folder without a merge commit.** Promotion requires a
+  linear branch, so pulling the helper in with a plain `git merge` is
+  rejected. Use `git merge --squash` (or otherwise add it as ordinary
+  commits); the squashed commit then drops out via the exclude pathspec.
+
 ## Rejections and conflicts
 
 ```mermaid

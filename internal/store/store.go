@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS bridges (
   promote_email TEXT NOT NULL DEFAULT '',
   promote_keep_trailer INTEGER NOT NULL DEFAULT 1,
   promote_signoff INTEGER NOT NULL DEFAULT 0,
+  promote_ignore_paths TEXT NOT NULL DEFAULT '[]',
   schedule_cron TEXT NOT NULL DEFAULT '',
   webhook_secret_enc BLOB,
   ssh_private_key_enc BLOB,
@@ -121,6 +122,7 @@ CREATE TABLE IF NOT EXISTS host_keys (
 		{"ssh_private_key_enc", "BLOB"},
 		{"ssh_public_key", "TEXT NOT NULL DEFAULT ''"},
 		{"ssh_key_id", "INTEGER"},
+		{"promote_ignore_paths", "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		if err := s.addColumnIfMissing("bridges", c.col, c.def); err != nil {
 			return err
@@ -220,6 +222,7 @@ type Bridge struct {
 	PromoteEmail       string
 	PromoteKeepTrailer bool
 	PromoteSignoff     bool
+	PromoteIgnorePaths []string
 	ScheduleCron       string
 	WebhookSecretEnc   []byte
 	SSHKeyID           *int64
@@ -249,12 +252,12 @@ func fromJSONArr(s string) []string {
 const bridgeCols = `id, name, slug, source_remote_url, gitea_base_url, gitea_owner,
  gitea_repo, gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches,
  sync_globs, tripwire_strings, promote_name, promote_email, promote_keep_trailer,
- promote_signoff, schedule_cron, webhook_secret_enc, ssh_key_id, status,
+ promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id, status,
  last_sync_at, last_sync_ok, last_verified_at, last_verify_ok, created_at, updated_at`
 
 func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	b := &Bridge{}
-	var excl, branches, globs, tripwires string
+	var excl, branches, globs, tripwires, ignorePaths string
 	var lastSyncOK, lastVerifyOK sql.NullBool
 	var lastSyncAt, lastVerifiedAt sql.NullTime
 	var sshKeyID sql.NullInt64
@@ -262,7 +265,7 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 		&b.GiteaOwner, &b.GiteaRepo, &b.GiteaSSHURL, &b.GiteaTokenEnc,
 		&excl, &branches, &globs, &tripwires,
 		&b.PromoteName, &b.PromoteEmail, &b.PromoteKeepTrailer, &b.PromoteSignoff,
-		&b.ScheduleCron, &b.WebhookSecretEnc, &sshKeyID, &b.Status,
+		&ignorePaths, &b.ScheduleCron, &b.WebhookSecretEnc, &sshKeyID, &b.Status,
 		&lastSyncAt, &lastSyncOK, &lastVerifiedAt, &lastVerifyOK,
 		&b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -278,6 +281,7 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	b.SyncBranches = fromJSONArr(branches)
 	b.SyncGlobs = fromJSONArr(globs)
 	b.TripwireStrings = fromJSONArr(tripwires)
+	b.PromoteIgnorePaths = fromJSONArr(ignorePaths)
 	if lastSyncAt.Valid {
 		b.LastSyncAt = &lastSyncAt.Time
 	}
@@ -298,12 +302,12 @@ func (s *Store) CreateBridge(b *Bridge) error {
  (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo,
   gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches, sync_globs,
   tripwire_strings, promote_name, promote_email, promote_keep_trailer,
-  promote_signoff, schedule_cron, webhook_secret_enc, ssh_key_id, status)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id, status)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.Name, b.Slug, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
-		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron, b.WebhookSecretEnc,
+		b.PromoteKeepTrailer, b.PromoteSignoff, jsonArr(b.PromoteIgnorePaths), b.ScheduleCron, b.WebhookSecretEnc,
 		b.SSHKeyID, b.Status)
 	if err != nil {
 		return err
@@ -317,13 +321,13 @@ func (s *Store) UpdateBridge(b *Bridge) error {
  name=?, source_remote_url=?, gitea_base_url=?, gitea_owner=?, gitea_repo=?,
  gitea_ssh_url=?, gitea_token_enc=?, excluded_paths=?, sync_branches=?,
  sync_globs=?, tripwire_strings=?, promote_name=?, promote_email=?,
- promote_keep_trailer=?, promote_signoff=?, schedule_cron=?,
+ promote_keep_trailer=?, promote_signoff=?, promote_ignore_paths=?, schedule_cron=?,
  webhook_secret_enc=?, ssh_key_id=?,
  status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		b.Name, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
-		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron,
+		b.PromoteKeepTrailer, b.PromoteSignoff, jsonArr(b.PromoteIgnorePaths), b.ScheduleCron,
 		b.WebhookSecretEnc, b.SSHKeyID, b.Status, b.ID)
 	return err
 }
