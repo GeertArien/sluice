@@ -108,6 +108,7 @@ advisory scan.
   promotion in the pre-flight screen) — patch-based: `format-patch` →
   security guard → `git am --3way`, optional identity rewrite with
   preserved author dates and `Co-authored-by` trailers).
+  See [docs/promotion.md](docs/promotion.md) for the full flow with diagrams.
 - **Finalization** — detect that a promoted change landed upstream
   (ancestor check, then `git cherry` patch-id equivalence), close the Gitea
   PR with an explanatory comment, delete both branches. Squash merges are

@@ -94,7 +94,7 @@ Step by step, exactly as the code runs it:
    (detects promotions that have landed upstream and cleans them up).
    Promotion (the **Gitea → source** return path, including the
    `git push` of the branch to the source remote) and finalization are
-   separate operations — see [spec §12.2–12.3](../spec.md).
+   separate operations — see [docs/promotion.md](promotion.md).
 
 The force-push is safe specifically because filter-repo is **deterministic**
 (next section).
