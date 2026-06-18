@@ -43,6 +43,7 @@
     <tr><th>schedule</th><td>{{if $b.ScheduleCron}}<code>{{$b.ScheduleCron}}</code>{{else}}manual / webhook only{{end}}</td></tr>
     <tr><th>last sync</th><td>{{timefmt $b.LastSyncAt}} {{if $b.LastSyncOK}}{{if deref $b.LastSyncOK}}<span class="badge badge-success">ok</span>{{else}}<span class="badge badge-failed">failed</span>{{end}}{{end}}</td></tr>
     <tr><th>last verified</th><td>{{timefmt $b.LastVerifiedAt}} {{if $b.LastVerifyOK}}{{if deref $b.LastVerifyOK}}<span class="badge badge-success">clean</span>{{else}}<span class="badge badge-failed">LEAK</span>{{end}}{{end}}</td></tr>
+    <tr><th>promote prefix</th><td><code>{{$b.PromoteBranchPrefix}}</code> <span class="muted">→ pushed as <code>{{$b.PromoteBranchPrefix}}&lt;agent-branch&gt;</code></span></td></tr>
     <tr><th>identity rewrite</th><td>{{if $b.PromoteName}}<code>{{$b.PromoteName}} &lt;{{$b.PromoteEmail}}&gt;</code>{{if $b.PromoteKeepTrailer}} + Co-authored-by{{end}}{{if $b.PromoteSignoff}} + signoff{{end}}{{else}}off (agent identity preserved){{end}}</td></tr>
     <tr><th>ssh key</th><td>
       {{if .SSHKey}}

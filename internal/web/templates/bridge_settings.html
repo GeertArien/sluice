@@ -33,7 +33,9 @@
     <label>Ref globs (comma separated) <input name="sync_globs" value="{{join $b.SyncGlobs ", "}}"></label>
     <label>Cron schedule <input name="schedule_cron" value="{{$b.ScheduleCron}}" placeholder="*/15 * * * *"></label>
   </fieldset>
-  <fieldset><legend>Promotion identity rewrite</legend>
+  <fieldset><legend>Promotion</legend>
+    <label>Upstream branch prefix <input name="promote_branch_prefix" value="{{$b.PromoteBranchPrefix}}" placeholder="ai/">
+      <small>promoted branches are pushed as <code>&lt;prefix&gt;&lt;agent-branch&gt;</code> on the source</small></label>
     <label>Name <input name="promote_name" value="{{$b.PromoteName}}"></label>
     <label>Email <input name="promote_email" value="{{$b.PromoteEmail}}"></label>
     <label class="check"><input type="checkbox" name="promote_keep_trailer" {{if $b.PromoteKeepTrailer}}checked{{end}}> add Co-authored-by trailer</label>

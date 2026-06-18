@@ -259,17 +259,18 @@ func (s *Service) runtimeBridge(b *store.Bridge) (*engine.Bridge, string, error)
 		}
 	}
 	return &engine.Bridge{
-		Slug:               b.Slug,
-		SourceRemoteURL:    b.SourceRemoteURL,
-		GiteaSSHURL:        b.GiteaSSHURL,
-		ExcludedPaths:      b.ExcludedPaths,
-		SyncBranches:       b.SyncBranches,
-		SyncGlobs:          b.SyncGlobs,
-		TripwireStrings:    b.TripwireStrings,
-		PromoteName:        b.PromoteName,
-		PromoteEmail:       b.PromoteEmail,
-		PromoteKeepTrailer: b.PromoteKeepTrailer,
-		PromoteSignoff:     b.PromoteSignoff,
+		Slug:                b.Slug,
+		SourceRemoteURL:     b.SourceRemoteURL,
+		GiteaSSHURL:         b.GiteaSSHURL,
+		ExcludedPaths:       b.ExcludedPaths,
+		SyncBranches:        b.SyncBranches,
+		SyncGlobs:           b.SyncGlobs,
+		TripwireStrings:     b.TripwireStrings,
+		PromoteName:         b.PromoteName,
+		PromoteEmail:        b.PromoteEmail,
+		PromoteKeepTrailer:  b.PromoteKeepTrailer,
+		PromoteSignoff:      b.PromoteSignoff,
+		PromoteBranchPrefix: b.PromoteBranchPrefix,
 	}, token, nil
 }
 
@@ -482,7 +483,7 @@ func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engi
 	recordRejected := func(reason string) {
 		p := &store.Promotion{
 			BridgeID: bridge.ID, GiteaBranch: branch, GiteaPRNumber: prNumber,
-			RealBranch: "ai/" + branch, BaseBranch: base, Status: "rejected",
+			RealBranch: rb.PromotedBranchName(branch), BaseBranch: base, Status: "rejected",
 		}
 		_ = s.Store.CreatePromotion(p)
 		s.Store.Audit(bridge.ID, "admin", "promotion_rejected", map[string]any{"branch": branch, "reason": reason})

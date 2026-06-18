@@ -35,7 +35,9 @@ docs/private">{{.Form.Get "excluded_paths"}}</textarea>
     <label>Ref globs (comma separated, optional) <input name="sync_globs" value="{{.Form.Get "sync_globs"}}" placeholder="refs/heads/release/*"></label>
     <label>Cron schedule (optional) <input name="schedule_cron" value="{{.Form.Get "schedule_cron"}}" placeholder="*/15 * * * *"></label>
   </fieldset>
-  <fieldset><legend>Promotion identity rewrite (optional)</legend>
+  <fieldset><legend>Promotion</legend>
+    <label>Upstream branch prefix <input name="promote_branch_prefix" value="{{with .Form.Get "promote_branch_prefix"}}{{.}}{{else}}ai/{{end}}" placeholder="ai/">
+      <small>promoted branches are pushed as <code>&lt;prefix&gt;&lt;agent-branch&gt;</code> on the source (e.g. <code>ai/</code> → <code>ai/feature-x</code>; use <code>feature/</code> for <code>feature/feature-x</code>)</small></label>
     <label>Committer/author name <input name="promote_name" value="{{.Form.Get "promote_name"}}" placeholder="AI Contributions"></label>
     <label>Committer/author email <input name="promote_email" value="{{.Form.Get "promote_email"}}" placeholder="ai@corp.example"></label>
     <label class="check"><input type="checkbox" name="promote_keep_trailer" checked> add Co-authored-by trailer with the original agent identity</label>

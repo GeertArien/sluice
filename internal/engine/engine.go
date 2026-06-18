@@ -29,10 +29,21 @@ type Bridge struct {
 	SyncGlobs       []string
 	TripwireStrings []string
 
-	PromoteName        string
-	PromoteEmail       string
-	PromoteKeepTrailer bool
-	PromoteSignoff     bool
+	PromoteName         string
+	PromoteEmail        string
+	PromoteKeepTrailer  bool
+	PromoteSignoff      bool
+	PromoteBranchPrefix string // prefix for the pushed upstream branch (e.g. "ai/")
+}
+
+// PromotedBranchName is the upstream branch name for a promoted agent branch:
+// <prefix><branch>, defaulting to "ai/" when no prefix is configured.
+func (b *Bridge) PromotedBranchName(branch string) string {
+	prefix := b.PromoteBranchPrefix
+	if prefix == "" {
+		prefix = "ai/"
+	}
+	return prefix + branch
 }
 
 // Engine executes git operations for one bridge within its workspace.

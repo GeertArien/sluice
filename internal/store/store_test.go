@@ -56,10 +56,14 @@ func TestMigrationUpgradesOldDatabase(t *testing.T) {
 		t.Fatalf("open/migrate old db: %v", err)
 	}
 
-	// Plain bridge: no key after migration.
+	// Plain bridge: no key after migration, and the promotion prefix column
+	// backfilled to the default.
 	plain, err := st.BridgeBySlug("plain")
 	if err != nil {
 		t.Fatalf("read migrated plain row: %v", err)
+	}
+	if plain.PromoteBranchPrefix != "ai/" {
+		t.Fatalf("promote prefix not backfilled: %q", plain.PromoteBranchPrefix)
 	}
 	if plain.SSHKeyID != nil {
 		t.Fatalf("plain bridge should have no key, got %v", plain.SSHKeyID)

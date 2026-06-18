@@ -230,7 +230,7 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base string) (*
 
 	// 5. apply onto real history
 	work := e.sourceWork(b)
-	realBranch := "ai/" + branch
+	realBranch := b.PromotedBranchName(branch)
 	if _, err := e.Runner.Run(ctx, work, "git", "fetch", "origin"); err != nil {
 		return nil, err
 	}

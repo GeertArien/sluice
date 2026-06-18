@@ -111,6 +111,10 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	b.PromoteEmail = strings.TrimSpace(r.PostFormValue("promote_email"))
 	b.PromoteKeepTrailer = r.PostFormValue("promote_keep_trailer") == "on"
 	b.PromoteSignoff = r.PostFormValue("promote_signoff") == "on"
+	b.PromoteBranchPrefix = strings.TrimSpace(r.PostFormValue("promote_branch_prefix"))
+	if b.PromoteBranchPrefix == "" {
+		b.PromoteBranchPrefix = "ai/"
+	}
 	b.ScheduleCron = strings.TrimSpace(r.PostFormValue("schedule_cron"))
 
 	if b.Name == "" || b.SourceRemoteURL == "" || b.GiteaBaseURL == "" || b.GiteaOwner == "" || b.GiteaRepo == "" {
@@ -124,6 +128,21 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	}
 	if b.PromoteName != "" && b.PromoteEmail == "" {
 		return errors.New("promote email is required when a promote name is set")
+	}
+	if err := validateBranchPrefix(b.PromoteBranchPrefix); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateBranchPrefix rejects prefixes that would produce an invalid git ref
+// when concatenated with an agent branch name.
+func validateBranchPrefix(p string) error {
+	if p == "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, "-") || strings.Contains(p, "..") {
+		return errors.New("promotion branch prefix must not be empty, start with '/' or '-', or contain '..'")
+	}
+	if strings.ContainsAny(p, " \t~^:?*[\\") {
+		return errors.New("promotion branch prefix contains characters not allowed in a git ref")
 	}
 	return nil
 }

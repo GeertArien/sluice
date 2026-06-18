@@ -292,6 +292,41 @@ func TestIdentityRewriteSkipsTrailerForSameIdentity(t *testing.T) {
 	}
 }
 
+// --- configurable promotion branch prefix ---
+
+func TestPromoteCustomBranchPrefix(t *testing.T) {
+	f := newFixture(t)
+	f.bridge.PromoteBranchPrefix = "feature/"
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "work")
+	f.commit(agent, "public/x.txt", "x\n", "agent: work")
+	f.git(agent, "push", "origin", "work")
+
+	res, err := f.eng.Promote(context.Background(), f.bridge, "work", "main")
+	if err != nil {
+		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
+	}
+	if res.RealBranch != "feature/work" {
+		t.Fatalf("real branch = %q, want feature/work", res.RealBranch)
+	}
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/feature/work"); err != nil {
+		t.Fatal("feature/work not pushed upstream")
+	}
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/ai/work"); err == nil {
+		t.Fatal("ai/work should not exist with a custom prefix")
+	}
+
+	// The cleanup guard only deletes branches under the configured prefix.
+	if err := f.eng.DeleteUpstreamBranch(context.Background(), f.bridge, "ai/work"); err == nil {
+		t.Fatal("guard should refuse a branch outside the prefix")
+	}
+	if err := f.eng.DeleteUpstreamBranch(context.Background(), f.bridge, "feature/work"); err != nil {
+		t.Fatalf("delete feature/work: %v", err)
+	}
+}
+
 // --- §13.5 guard ---
 
 func TestGuardRejectsPatchTouchingExcludedPath(t *testing.T) {
