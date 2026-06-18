@@ -17,6 +17,8 @@ h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.6rem; }
 a { color: var(--accent); }
 code, .sha, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 .sha { cursor: pointer; background: var(--panel); padding: 1px 4px; border-radius: 3px; }
+code.wrap { display: inline-block; max-width: 100%; overflow-wrap: anywhere;
+  white-space: pre-wrap; background: var(--panel); padding: 1px 4px; border-radius: 3px; }
 .sha.copied { outline: 1px solid var(--green); }
 pre { background: #0d0f11; border: 1px solid var(--line); padding: .8rem;
   overflow-x: auto; white-space: pre-wrap; word-break: break-word; }

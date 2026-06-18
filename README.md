@@ -37,13 +37,30 @@ source, runs the first filtered sync, and runs the **leak-check
 verification** — the bridge stays paused until you review the result and
 activate it.
 
-For SSH remotes, mount an SSH key for the container user and a pinned
+For SSH remotes you provide the key one of two ways, plus a pinned
 `known_hosts` file (Sluice never uses `StrictHostKeyChecking=no`):
+
+**Managed key (recommended).** On the bridge create/settings page choose
+"Generate a new keypair" (or paste an existing one). Sluice stores the private
+key encrypted at rest and shows the public key to register as a
+**write-enabled** deploy key on the source and the Gitea mirror. A managed key
+is per-bridge and used as ssh's sole identity — no file mounting needed. You
+still provide `known_hosts`:
+
+```sh
+  -v $PWD/known_hosts:/data/known_hosts:ro
+```
+
+**Mounted key (fallback).** If a bridge has no managed key, ssh uses the
+container's default identity, so you can instead mount a key for all bridges:
 
 ```sh
   -v $PWD/known_hosts:/data/known_hosts:ro \
   -v $PWD/id_ed25519:/home/sluice/.ssh/id_ed25519:ro
 ```
+
+The source key needs **push** access (promotion pushes `ai/<branch>` and
+finalize deletes it), and the same identity is used for the Gitea push.
 
 ### Running on a bind-mounted volume (unraid / NAS)
 

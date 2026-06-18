@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS bridges (
   promote_signoff INTEGER NOT NULL DEFAULT 0,
   schedule_cron TEXT NOT NULL DEFAULT '',
   webhook_secret_enc BLOB,
+  ssh_private_key_enc BLOB,
+  ssh_public_key TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'paused',
   last_sync_at TIMESTAMP,
   last_sync_ok INTEGER,
@@ -94,6 +96,46 @@ CREATE TABLE IF NOT EXISTS audit_log (
   at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `)
+	if err != nil {
+		return err
+	}
+	// Upgrades: add columns introduced after the initial schema. CREATE TABLE
+	// above already includes them for fresh databases; these are no-ops there.
+	for _, c := range []struct{ col, def string }{
+		{"ssh_private_key_enc", "BLOB"},
+		{"ssh_public_key", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing("bridges", c.col, c.def); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addColumnIfMissing adds a column to a table when it isn't already present,
+// so existing databases pick up schema additions. table/column/def are
+// in-code constants, never user input.
+func (s *Store) addColumnIfMissing(table, column, def string) error {
+	rows, err := s.DB.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.DB.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + def)
 	return err
 }
 
@@ -119,6 +161,8 @@ type Bridge struct {
 	PromoteSignoff     bool
 	ScheduleCron       string
 	WebhookSecretEnc   []byte
+	SSHPrivateKeyEnc   []byte
+	SSHPublicKey       string
 	Status             string
 	LastSyncAt         *time.Time
 	LastSyncOK         *bool
@@ -145,7 +189,8 @@ func fromJSONArr(s string) []string {
 const bridgeCols = `id, name, slug, source_remote_url, gitea_base_url, gitea_owner,
  gitea_repo, gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches,
  sync_globs, tripwire_strings, promote_name, promote_email, promote_keep_trailer,
- promote_signoff, schedule_cron, webhook_secret_enc, status,
+ promote_signoff, schedule_cron, webhook_secret_enc, ssh_private_key_enc,
+ ssh_public_key, status,
  last_sync_at, last_sync_ok, last_verified_at, last_verify_ok, created_at, updated_at`
 
 func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
@@ -157,7 +202,7 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 		&b.GiteaOwner, &b.GiteaRepo, &b.GiteaSSHURL, &b.GiteaTokenEnc,
 		&excl, &branches, &globs, &tripwires,
 		&b.PromoteName, &b.PromoteEmail, &b.PromoteKeepTrailer, &b.PromoteSignoff,
-		&b.ScheduleCron, &b.WebhookSecretEnc, &b.Status,
+		&b.ScheduleCron, &b.WebhookSecretEnc, &b.SSHPrivateKeyEnc, &b.SSHPublicKey, &b.Status,
 		&lastSyncAt, &lastSyncOK, &lastVerifiedAt, &lastVerifyOK,
 		&b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -190,12 +235,14 @@ func (s *Store) CreateBridge(b *Bridge) error {
  (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo,
   gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches, sync_globs,
   tripwire_strings, promote_name, promote_email, promote_keep_trailer,
-  promote_signoff, schedule_cron, webhook_secret_enc, status)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  promote_signoff, schedule_cron, webhook_secret_enc, ssh_private_key_enc,
+  ssh_public_key, status)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.Name, b.Slug, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
-		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron, b.WebhookSecretEnc, b.Status)
+		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron, b.WebhookSecretEnc,
+		b.SSHPrivateKeyEnc, b.SSHPublicKey, b.Status)
 	if err != nil {
 		return err
 	}
@@ -209,12 +256,13 @@ func (s *Store) UpdateBridge(b *Bridge) error {
  gitea_ssh_url=?, gitea_token_enc=?, excluded_paths=?, sync_branches=?,
  sync_globs=?, tripwire_strings=?, promote_name=?, promote_email=?,
  promote_keep_trailer=?, promote_signoff=?, schedule_cron=?,
- webhook_secret_enc=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+ webhook_secret_enc=?, ssh_private_key_enc=?, ssh_public_key=?,
+ status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		b.Name, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
 		b.PromoteKeepTrailer, b.PromoteSignoff, b.ScheduleCron,
-		b.WebhookSecretEnc, b.Status, b.ID)
+		b.WebhookSecretEnc, b.SSHPrivateKeyEnc, b.SSHPublicKey, b.Status, b.ID)
 	return err
 }
 
