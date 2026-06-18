@@ -11,8 +11,9 @@ Gitea instance where excluded folders are removed from the *entire history*
 (`git filter-repo`, not sparse checkout). Agents work only against the
 mirror via the normal forge workflow. When an agent's PR is approved, the
 operator **promotes** it: Sluice translates the filtered-history commits
-back onto the real history and pushes an `ai/<branch>` branch to the source
-remote. After the upstream merge, Sluice **finalizes**: closes the Gitea PR
+back onto the real history and pushes a branch to the source remote (named
+after the agent branch by default, editable in the pre-flight screen). After
+the upstream merge, Sluice **finalizes**: closes the Gitea PR
 and deletes both branches.
 
 The full specification lives in [spec.md](spec.md). The git command
@@ -59,7 +60,7 @@ container's default identity, so you can instead mount one key for all bridges:
   -v $PWD/id_ed25519:/home/sluice/.ssh/id_ed25519:ro
 ```
 
-The source key needs **push** access (promotion pushes `ai/<branch>` and
+The source key needs **push** access (promotion pushes the promoted branch and
 finalize deletes it), and the same identity is used for the Gitea push.
 
 ### Running on a bind-mounted volume (unraid / NAS)
@@ -101,8 +102,9 @@ advisory scan.
   configured branches to Gitea, store the commit-map, run finalization
   checks. Triggered manually, by cron, or by webhook
   (`POST /hooks/<slug>` with `X-Sluice-Secret`; bursts debounced ~30s).
-- **Promotion** — translate an agent branch from the mirror into an
-  `ai/<branch>` on the source remote (patch-based: `format-patch` →
+- **Promotion** — translate an agent branch from the mirror onto the source
+  remote, pushed under the agent branch name by default (editable per
+  promotion in the pre-flight screen) — patch-based: `format-patch` →
   security guard → `git am --3way`, optional identity rewrite with
   preserved author dates and `Co-authored-by` trailers).
 - **Finalization** — detect that a promoted change landed upstream

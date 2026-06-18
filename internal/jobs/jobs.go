@@ -312,6 +312,7 @@ func (s *Service) EngineFor(b *store.Bridge, token string, logSink func(string))
 type promotePayload struct {
 	Branch string `json:"branch"`
 	Base   string `json:"base"`
+	Target string `json:"target,omitempty"` // upstream branch name; empty = same as Branch
 }
 
 type finalizePayload struct {
@@ -370,7 +371,7 @@ func (s *Service) runJob(ctx context.Context, job *store.Job) {
 			break
 		}
 		var needsAttention bool
-		needsAttention, jobErr = s.runPromote(ctx, bridge, rb, eng, api, p.Branch, p.Base, logSink)
+		needsAttention, jobErr = s.runPromote(ctx, bridge, rb, eng, api, p.Branch, p.Base, p.Target, logSink)
 		if needsAttention {
 			status = "needs_attention"
 		}
@@ -470,7 +471,10 @@ func (s *Service) runVerify(ctx context.Context, bridge *store.Bridge, rb *engin
 
 // runPromote returns needsAttention=true when the job should end in
 // needs_attention (am conflict) rather than failed.
-func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engine.Bridge, eng *engine.Engine, api GiteaAPI, branch, base string, logSink func(string)) (bool, error) {
+func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engine.Bridge, eng *engine.Engine, api GiteaAPI, branch, base, target string, logSink func(string)) (bool, error) {
+	if target == "" {
+		target = branch
+	}
 	// Find the matching open PR (nullable: branch-only promotions are allowed).
 	var prNumber *int64
 	if pr, err := api.FindOpenPRByHead(ctx, bridge.GiteaOwner, bridge.GiteaRepo, branch); err != nil {
@@ -482,13 +486,13 @@ func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engi
 	recordRejected := func(reason string) {
 		p := &store.Promotion{
 			BridgeID: bridge.ID, GiteaBranch: branch, GiteaPRNumber: prNumber,
-			RealBranch: "ai/" + branch, BaseBranch: base, Status: "rejected",
+			RealBranch: target, BaseBranch: base, Status: "rejected",
 		}
 		_ = s.Store.CreatePromotion(p)
 		s.Store.Audit(bridge.ID, "admin", "promotion_rejected", map[string]any{"branch": branch, "reason": reason})
 	}
 
-	res, err := eng.Promote(ctx, rb, branch, base)
+	res, err := eng.Promote(ctx, rb, branch, base, target)
 	if err != nil {
 		var guard *engine.ErrGuardViolation
 		if errors.As(err, &guard) {
@@ -593,7 +597,7 @@ func (s *Service) FinalizePromotion(ctx context.Context, bridge *store.Bridge, r
 	if err := api.DeleteBranch(ctx, bridge.GiteaOwner, bridge.GiteaRepo, p.GiteaBranch); err != nil {
 		logf("finalize: gitea branch delete failed (may already be gone): " + err.Error())
 	}
-	if err := eng.DeleteUpstreamBranch(ctx, rb, p.RealBranch); err != nil {
+	if err := eng.DeleteUpstreamBranch(ctx, rb, p.RealBranch, p.BaseBranch); err != nil {
 		logf("finalize: upstream branch delete failed (may already be gone): " + err.Error())
 	}
 	if err := s.Store.UpdatePromotionStatus(p.ID, "finalized"); err != nil {

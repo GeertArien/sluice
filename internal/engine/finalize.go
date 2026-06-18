@@ -33,11 +33,13 @@ func (e *Engine) DetectLanded(ctx context.Context, b *Bridge, realTipSHA, base s
 	return true, nil
 }
 
-// DeleteUpstreamBranch removes the promoted ai/* branch from the source
-// remote after the change has landed (spec §12.3 cleanup).
-func (e *Engine) DeleteUpstreamBranch(ctx context.Context, b *Bridge, realBranch string) error {
-	if !strings.HasPrefix(realBranch, "ai/") {
-		return fmt.Errorf("refusing to delete non-ai/ branch %q upstream", realBranch)
+// DeleteUpstreamBranch removes the promoted branch from the source remote
+// after the change has landed (spec §12.3 cleanup). As a safety net it
+// refuses to delete an empty name or the base branch, so it can never remove
+// a protected/integration branch.
+func (e *Engine) DeleteUpstreamBranch(ctx context.Context, b *Bridge, realBranch, base string) error {
+	if realBranch == "" || realBranch == base {
+		return fmt.Errorf("refusing to delete %q upstream (empty or equals base branch)", realBranch)
 	}
 	_, err := e.Runner.Run(ctx, e.sourceWork(b), "git", "push", "origin", "--delete", realBranch)
 	return err

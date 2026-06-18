@@ -183,10 +183,20 @@ func (e *Engine) RunPreflight(ctx context.Context, b *Bridge, branch, base strin
 	return pf, nil
 }
 
-// Promote implements spec §12.2. On guard violation it returns
-// *ErrGuardViolation; on an am conflict it returns *ErrAmConflict and leaves
-// source-work mid-am for manual resolution.
-func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base string) (*PromoteResult, error) {
+// Promote implements spec §12.2. target is the branch name to create on the
+// source remote; when empty it defaults to the agent branch name. On guard
+// violation it returns *ErrGuardViolation; on an am conflict it returns
+// *ErrAmConflict and leaves source-work mid-am for manual resolution.
+func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base, target string) (*PromoteResult, error) {
+	if target == "" {
+		target = branch
+	}
+	if err := e.CheckRefName(ctx, target); err != nil {
+		return nil, &ErrRejected{Reason: fmt.Sprintf("invalid target branch name %q", target)}
+	}
+	if target == base {
+		return nil, &ErrRejected{Reason: fmt.Sprintf("target branch must differ from the base branch %q", base)}
+	}
 	// 1. resolve
 	tip, baseFiltered, baseReal, err := e.resolveBranch(ctx, b, branch, base)
 	if err != nil {
@@ -230,7 +240,7 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base string) (*
 
 	// 5. apply onto real history
 	work := e.sourceWork(b)
-	realBranch := "ai/" + branch
+	realBranch := target
 	if _, err := e.Runner.Run(ctx, work, "git", "fetch", "origin"); err != nil {
 		return nil, err
 	}

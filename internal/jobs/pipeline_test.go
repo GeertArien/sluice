@@ -169,20 +169,20 @@ func TestFullPipeline(t *testing.T) {
 	if job.Status != "success" {
 		t.Fatalf("promote failed: %s\n%s", job.ErrorSummary, job.Log)
 	}
-	if len(fake.comments) != 1 || !strings.Contains(fake.comments[0], "Promoted upstream as `ai/feat`") {
+	if len(fake.comments) != 1 || !strings.Contains(fake.comments[0], "Promoted upstream as `feat`") {
 		t.Fatalf("missing promotion PR comment: %v", fake.comments)
 	}
 	promos, _ := st.PromotionsForBridge(bridge.ID)
 	if len(promos) != 1 || promos[0].Status != "promoted" || *promos[0].GiteaPRNumber != 7 {
 		t.Fatalf("promotion record wrong: %+v", promos[0])
 	}
-	if gitRun(t, src, "rev-parse", "refs/heads/ai/feat") != promos[0].RealTipSHA {
+	if gitRun(t, src, "rev-parse", "refs/heads/feat") != promos[0].RealTipSHA {
 		t.Fatal("recorded tip does not match upstream branch")
 	}
 
 	// Merge upstream, then sync — finalization must auto-trigger.
 	gitRun(t, dev, "fetch", "origin")
-	gitRun(t, dev, "merge", "--no-ff", "-m", "merge ai/feat", "origin/ai/feat")
+	gitRun(t, dev, "merge", "--no-ff", "-m", "merge feat", "origin/feat")
 	gitRun(t, dev, "push", "origin", "main")
 	job = runKind("sync", nil)
 	if job.Status != "success" {
@@ -201,9 +201,9 @@ func TestFullPipeline(t *testing.T) {
 	if !strings.Contains(fake.comments[1], "not a rejection") {
 		t.Fatalf("close comment must explain close-not-merge: %q", fake.comments[1])
 	}
-	out, err := exec.Command("git", "-C", src, "rev-parse", "--verify", "refs/heads/ai/feat").CombinedOutput()
+	out, err := exec.Command("git", "-C", src, "rev-parse", "--verify", "refs/heads/feat").CombinedOutput()
 	if err == nil {
-		t.Fatalf("upstream ai/feat not deleted: %s", out)
+		t.Fatalf("upstream feat not deleted: %s", out)
 	}
 
 	// §13.9: no token material in any job log.

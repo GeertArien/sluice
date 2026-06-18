@@ -56,11 +56,15 @@ author dates kept{{if $b.PromoteKeepTrailer}}, original agent recorded as Co-aut
 
 {{if and .GuardOK (eq .MergeCount 0) (gt .CommitCount 0) .BaseReal}}
 <form method="post" action="/bridges/{{$b.Slug}}/promote"
-      data-confirm="This will apply {{.CommitCount}} commit(s) onto the real history and push branch ai/{{$.Branch}} to {{$b.SourceRemoteURL}}.">
+      data-confirm="This will apply {{.CommitCount}} commit(s) onto the real history and push to {{$b.SourceRemoteURL}}.">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="branch" value="{{$.Branch}}">
   <input type="hidden" name="base" value="{{$.Base}}">
-  <button class="primary">Promote to ai/{{$.Branch}}</button>
+  <label>Upstream branch name
+    <input name="target" value="{{$.Branch}}" required>
+    <small>defaults to the agent branch name; change it to push under a different name on the source</small>
+  </label>
+  <button class="primary">Promote</button>
 </form>
 {{else}}
 <p class="banner banner-yellow">Promotion blocked until all checks above pass.</p>

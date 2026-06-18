@@ -221,21 +221,68 @@ func TestRoundTripPromotionPreservesAuthorAndExcludedFiles(t *testing.T) {
 	f.commit(agent, "public/feature.txt", "agent work\n", "agent: add feature")
 	f.git(agent, "push", "origin", "feature")
 
-	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	if err != nil {
 		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
 	}
-	if res.RealBranch != "ai/feature" || res.NumCommits != 1 {
+	if res.RealBranch != "feature" || res.NumCommits != 1 {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 	// Upstream branch exists with the agent's author and the secret intact.
-	author := f.git(f.src, "log", "-1", "--format=%an <%ae>", "ai/feature")
+	author := f.git(f.src, "log", "-1", "--format=%an <%ae>", "feature")
 	if author != "Agent Smith <agent@vm.local>" {
 		t.Fatalf("author not preserved: %q", author)
 	}
-	files := f.git(f.src, "ls-tree", "-r", "--name-only", "ai/feature")
+	files := f.git(f.src, "ls-tree", "-r", "--name-only", "feature")
 	if !strings.Contains(files, "secret/key.txt") || !strings.Contains(files, "public/feature.txt") {
 		t.Fatalf("promoted branch missing files:\n%s", files)
+	}
+}
+
+// --- promotion target branch name ---
+
+func TestPromoteCustomTargetBranch(t *testing.T) {
+	f := newFixture(t)
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "work")
+	f.commit(agent, "public/x.txt", "x\n", "agent: work")
+	f.git(agent, "push", "origin", "work")
+
+	res, err := f.eng.Promote(context.Background(), f.bridge, "work", "main", "release/from-agent")
+	if err != nil {
+		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
+	}
+	if res.RealBranch != "release/from-agent" {
+		t.Fatalf("real branch = %q, want release/from-agent", res.RealBranch)
+	}
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/release/from-agent"); err != nil {
+		t.Fatal("custom target branch not pushed upstream")
+	}
+	// The agent's own branch name must not have been created upstream.
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/work"); err == nil {
+		t.Fatal("agent branch name should not exist upstream when a custom target is given")
+	}
+}
+
+func TestPromoteRejectsTargetEqualBase(t *testing.T) {
+	f := newFixture(t)
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "work")
+	f.commit(agent, "public/x.txt", "x\n", "agent: work")
+	f.git(agent, "push", "origin", "work")
+
+	_, err := f.eng.Promote(context.Background(), f.bridge, "work", "main", "main")
+	var rej *ErrRejected
+	if !errors.As(err, &rej) {
+		t.Fatalf("expected rejection when target == base, got %v", err)
+	}
+	// The base branch upstream must be untouched (still reachable, not force-pushed).
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/main"); err != nil {
+		t.Fatal("base branch should still exist")
 	}
 }
 
@@ -254,10 +301,10 @@ func TestIdentityRewriteSetsAuthorCommitterAndTrailer(t *testing.T) {
 	origDate := f.git(agent, "log", "-1", "--format=%aI")
 	f.git(agent, "push", "origin", "feature")
 
-	if _, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main"); err != nil {
+	if _, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", ""); err != nil {
 		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
 	}
-	show := f.git(f.src, "log", "-1", "--format=%an|%ae|%cn|%ce|%aI", "ai/feature")
+	show := f.git(f.src, "log", "-1", "--format=%an|%ae|%cn|%ce|%aI", "feature")
 	parts := strings.Split(show, "|")
 	if parts[0] != "AI Bot" || parts[1] != "ai-bot@corp.example" || parts[2] != "AI Bot" || parts[3] != "ai-bot@corp.example" {
 		t.Fatalf("identity not rewritten: %s", show)
@@ -265,7 +312,7 @@ func TestIdentityRewriteSetsAuthorCommitterAndTrailer(t *testing.T) {
 	if parts[4] != origDate {
 		t.Fatalf("author date not preserved: got %s want %s", parts[4], origDate)
 	}
-	body := f.git(f.src, "log", "-1", "--format=%B", "ai/feature")
+	body := f.git(f.src, "log", "-1", "--format=%B", "feature")
 	if !strings.Contains(body, "Co-authored-by: Agent Smith <agent@vm.local>") {
 		t.Fatalf("missing Co-authored-by trailer:\n%s", body)
 	}
@@ -283,10 +330,10 @@ func TestIdentityRewriteSkipsTrailerForSameIdentity(t *testing.T) {
 	f.commit(agent, "public/feature.txt", "agent work\n", "agent: add feature")
 	f.git(agent, "push", "origin", "feature")
 
-	if _, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main"); err != nil {
+	if _, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", ""); err != nil {
 		t.Fatalf("promote: %v\nlog:\n%s", err, f.logs)
 	}
-	body := f.git(f.src, "log", "-1", "--format=%B", "ai/feature")
+	body := f.git(f.src, "log", "-1", "--format=%B", "feature")
 	if strings.Contains(body, "Co-authored-by") {
 		t.Fatalf("trailer added despite identical identity:\n%s", body)
 	}
@@ -304,13 +351,13 @@ func TestGuardRejectsPatchTouchingExcludedPath(t *testing.T) {
 	f.commit(agent, "secret/exfil.txt", "planted\n", "agent: innocent-looking change")
 	f.git(agent, "push", "origin", "sneaky")
 
-	_, err := f.eng.Promote(context.Background(), f.bridge, "sneaky", "main")
+	_, err := f.eng.Promote(context.Background(), f.bridge, "sneaky", "main", "")
 	var guard *ErrGuardViolation
 	if !errors.As(err, &guard) {
 		t.Fatalf("expected guard violation, got %v", err)
 	}
 	// Nothing may have been pushed upstream.
-	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "ai/sneaky"); err == nil {
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "sneaky"); err == nil {
 		t.Fatal("guard failed but branch was pushed upstream")
 	}
 }
@@ -370,7 +417,7 @@ func TestMergeCommitRejected(t *testing.T) {
 	f.git(agent, "merge", "--no-ff", "-m", "merge side", "side")
 	f.git(agent, "push", "origin", "merged")
 
-	_, err := f.eng.Promote(context.Background(), f.bridge, "merged", "main")
+	_, err := f.eng.Promote(context.Background(), f.bridge, "merged", "main", "")
 	var rej *ErrRejected
 	if !errors.As(err, &rej) || !strings.Contains(rej.Reason, "rebase onto main") {
 		t.Fatalf("expected merge rejection with remediation, got %v", err)
@@ -385,7 +432,7 @@ func TestEmptyBranchRejected(t *testing.T) {
 	f.git(agent, "checkout", "-b", "noop")
 	f.git(agent, "push", "origin", "noop")
 
-	_, err := f.eng.Promote(context.Background(), f.bridge, "noop", "main")
+	_, err := f.eng.Promote(context.Background(), f.bridge, "noop", "main", "")
 	var rej *ErrRejected
 	if !errors.As(err, &rej) || !strings.Contains(rej.Reason, "nothing to promote") {
 		t.Fatalf("expected empty-branch rejection, got %v", err)
@@ -433,7 +480,7 @@ func TestAmConflictNeedsAttentionAndAbort(t *testing.T) {
 	f.commit(agent, "public/readme.md", "# readme EDITED\n", "agent: edit readme")
 	f.git(agent, "push", "origin", "feature")
 
-	_, err = f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	_, err = f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	var conflict *ErrAmConflict
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected am conflict, got %v\nlog:\n%s", err, f.logs)
@@ -465,7 +512,7 @@ func TestFinalizeDetectsTrueMergeAndFastForward(t *testing.T) {
 	f.commit(agent, "public/feature.txt", "agent work\n", "agent: add feature")
 	f.git(agent, "push", "origin", "feature")
 
-	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +525,7 @@ func TestFinalizeDetectsTrueMergeAndFastForward(t *testing.T) {
 	}
 	// True merge upstream.
 	f.git(f.dev, "fetch", "origin")
-	f.git(f.dev, "merge", "--no-ff", "-m", "merge ai/feature", "origin/ai/feature")
+	f.git(f.dev, "merge", "--no-ff", "-m", "merge feature", "origin/feature")
 	f.git(f.dev, "push", "origin", "main")
 
 	landed, err = f.eng.DetectLanded(context.Background(), f.bridge, res.TipSHA, "main")
@@ -488,10 +535,10 @@ func TestFinalizeDetectsTrueMergeAndFastForward(t *testing.T) {
 	if !landed {
 		t.Fatal("true merge not detected")
 	}
-	if err := f.eng.DeleteUpstreamBranch(context.Background(), f.bridge, res.RealBranch); err != nil {
+	if err := f.eng.DeleteUpstreamBranch(context.Background(), f.bridge, res.RealBranch, "main"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/ai/feature"); err == nil {
+	if _, err := f.gitErr(f.src, "rev-parse", "--verify", "refs/heads/feature"); err == nil {
 		t.Fatal("upstream ai/ branch not deleted")
 	}
 }
@@ -505,7 +552,7 @@ func TestFinalizeDetectsRebaseMergeViaCherry(t *testing.T) {
 	f.commit(agent, "public/feature.txt", "agent work\n", "agent: add feature")
 	f.git(agent, "push", "origin", "feature")
 
-	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,13 +581,13 @@ func TestSquashMergeIsNotAutoDetected(t *testing.T) {
 	f.commit(agent, "public/f2.txt", "two\n", "agent: part 2")
 	f.git(agent, "push", "origin", "feature")
 
-	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	res, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Squash merge upstream: one combined commit, different patch-ids.
 	f.git(f.dev, "fetch", "origin")
-	f.git(f.dev, "merge", "--squash", "origin/ai/feature")
+	f.git(f.dev, "merge", "--squash", "origin/feature")
 	f.git(f.dev, "commit", "-m", "squash: feature")
 	f.git(f.dev, "push", "origin", "main")
 
@@ -569,10 +616,10 @@ func TestPromotionWithBinaryFile(t *testing.T) {
 	f.git(agent, "commit", "-m", "agent: add binary")
 	f.git(agent, "push", "origin", "bin")
 
-	if _, err := f.eng.Promote(context.Background(), f.bridge, "bin", "main"); err != nil {
+	if _, err := f.eng.Promote(context.Background(), f.bridge, "bin", "main", ""); err != nil {
 		t.Fatalf("binary promotion failed: %v\nlog:\n%s", err, f.logs)
 	}
-	files := f.git(f.src, "ls-tree", "-r", "--name-only", "ai/bin")
+	files := f.git(f.src, "ls-tree", "-r", "--name-only", "bin")
 	if !strings.Contains(files, "public/blob.bin") {
 		t.Fatal("binary file missing upstream")
 	}
@@ -590,7 +637,7 @@ func TestCommitMapMissingFailsWithGuidance(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.workdir, "test", "commit-map")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main")
+	_, err := f.eng.Promote(context.Background(), f.bridge, "feature", "main", "")
 	if err == nil || !strings.Contains(err.Error(), "run a sync first") {
 		t.Fatalf("expected 'run a sync first' guidance, got %v", err)
 	}
