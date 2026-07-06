@@ -299,6 +299,165 @@ func TestGenerateKeyThenSelectOnBridgeSkipsAutoInit(t *testing.T) {
 	}
 }
 
+func TestGiteaTokenReuseAcrossBridges(t *testing.T) {
+	ts, client, st := setup(t)
+	csrf := login(t, ts, client)
+
+	// Add a shared token on the tokens page.
+	resp, err := client.PostForm(ts.URL+"/tokens", url.Values{
+		"csrf": {csrf}, "name": {"shared-token"}, "token": {"s3cr3t-value"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("token create returned %d:\n%s", resp.StatusCode, tokBody)
+	}
+	tokens, _ := st.GiteaTokens()
+	if len(tokens) != 1 || tokens[0].Name != "shared-token" {
+		t.Fatalf("token not stored: %+v", tokens)
+	}
+	tok := tokens[0]
+	// The tokens page shows the name but never the secret value.
+	if strings.Contains(string(tokBody), "s3cr3t-value") {
+		t.Fatal("token value leaked on the tokens page")
+	}
+	if !strings.Contains(string(tokBody), "shared-token") {
+		t.Fatal("tokens page missing token name")
+	}
+
+	// Two bridges both select the shared token from the list.
+	for _, slug := range []string{"alpha", "beta"} {
+		resp, err := client.PostForm(ts.URL+"/bridges", url.Values{
+			"csrf":              {csrf},
+			"name":              {slug},
+			"slug":              {slug},
+			"source_remote_url": {"git@github.com:o/r.git"},
+			"gitea_base_url":    {"http://192.168.1.50:3000"},
+			"gitea_owner":       {"ai"},
+			"gitea_repo":        {slug},
+			"gitea_token_id":    {strconv.FormatInt(tok.ID, 10)},
+			"excluded_paths":    {"secret"},
+			"sync_branches":     {"main"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("create %s returned %d:\n%s", slug, resp.StatusCode, body)
+		}
+		b, err := st.BridgeBySlug(slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.GiteaTokenID == nil || *b.GiteaTokenID != tok.ID {
+			t.Fatalf("bridge %s not linked to the shared token: %v", slug, b.GiteaTokenID)
+		}
+		if len(b.GiteaTokenEnc) != 0 {
+			t.Fatalf("bridge %s kept an inline token copy", slug)
+		}
+	}
+
+	// The token was reused, not duplicated, and both bridges reference it.
+	if tokens, _ := st.GiteaTokens(); len(tokens) != 1 {
+		t.Fatalf("expected the token to be reused, got %d tokens", len(tokens))
+	}
+	if users, _ := st.BridgesUsingGiteaToken(tok.ID); len(users) != 2 {
+		t.Fatalf("expected 2 bridges using the token, got %v", users)
+	}
+
+	// A token in use cannot be deleted.
+	resp, err = client.PostForm(ts.URL+"/tokens/"+strconv.FormatInt(tok.ID, 10)+"/delete", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(delBody), "cannot delete") {
+		t.Fatal("expected in-use token deletion to be blocked")
+	}
+	if toks, _ := st.GiteaTokens(); len(toks) != 1 {
+		t.Fatal("in-use token was deleted")
+	}
+}
+
+func TestBridgeCreateSavesNewInlineToken(t *testing.T) {
+	ts, client, st := setup(t)
+	csrf := login(t, ts, client)
+
+	// Pasting a new token in the bridge form saves it to the shared list.
+	resp, err := client.PostForm(ts.URL+"/bridges", url.Values{
+		"csrf":              {csrf},
+		"name":              {"Fresh"},
+		"slug":              {"fresh"},
+		"source_remote_url": {"git@github.com:o/r.git"},
+		"gitea_base_url":    {"http://192.168.1.50:3000"},
+		"gitea_owner":       {"ai"},
+		"gitea_repo":        {"fresh"},
+		"new_token_name":    {"fresh-token"},
+		"gitea_token":       {"paste-me"},
+		"excluded_paths":    {"secret"},
+		"sync_branches":     {"main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("create returned %d:\n%s", resp.StatusCode, body)
+	}
+
+	tokens, _ := st.GiteaTokens()
+	if len(tokens) != 1 || tokens[0].Name != "fresh-token" {
+		t.Fatalf("inline token not saved to the shared list: %+v", tokens)
+	}
+	b, err := st.BridgeBySlug("fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.GiteaTokenID == nil || *b.GiteaTokenID != tokens[0].ID {
+		t.Fatalf("bridge not linked to the new token: %v", b.GiteaTokenID)
+	}
+	if len(b.GiteaTokenEnc) != 0 {
+		t.Fatal("bridge kept an inline token copy instead of linking the shared token")
+	}
+	// The saved value is encrypted and round-trips to the pasted plaintext.
+	box, _ := secrets.New(strings.Repeat("ef", 32))
+	if v, _ := box.Decrypt(tokens[0].TokenEnc); v != "paste-me" {
+		t.Fatalf("token value not stored correctly: %q", v)
+	}
+}
+
+func TestBridgeCreateRequiresAToken(t *testing.T) {
+	ts, client, _ := setup(t)
+	csrf := login(t, ts, client)
+
+	resp, err := client.PostForm(ts.URL+"/bridges", url.Values{
+		"csrf":              {csrf},
+		"name":              {"NoTok"},
+		"slug":              {"notok"},
+		"source_remote_url": {"git@github.com:o/r.git"},
+		"gitea_base_url":    {"http://192.168.1.50:3000"},
+		"gitea_owner":       {"ai"},
+		"gitea_repo":        {"notok"},
+		"excluded_paths":    {"secret"},
+		"sync_branches":     {"main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "Gitea API token is required") {
+		t.Fatalf("expected a token-required error, got:\n%s", body)
+	}
+}
+
 func TestTrustedHostsScanTrustAndDelete(t *testing.T) {
 	ts, client, st, knownHosts := setupKH(t)
 	csrf := login(t, ts, client)

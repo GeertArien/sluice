@@ -1,0 +1,45 @@
+{{template "head" .}}
+<div class="pagehead">
+  <h1>Gitea API tokens</h1>
+</div>
+<p class="muted">Named Gitea API tokens you can reuse across bridges instead of pasting one per
+bridge. The token value is stored encrypted at rest and never shown again after it is saved;
+select it by name when creating or editing a bridge.</p>
+
+{{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
+
+{{if not .Rows}}
+<div class="empty">No tokens yet. Add one below, then select it when creating or editing a bridge.</div>
+{{else}}
+<table>
+  <tr><th>name</th><th>used by</th><th>created</th><th></th></tr>
+  {{range .Rows}}
+  <tr>
+    <td><strong>{{.Token.Name}}</strong></td>
+    <td>{{if .Users}}{{join .Users ", "}}{{else}}<span class="muted">unused</span>{{end}}</td>
+    <td>{{.Token.CreatedAt.Local.Format "2006-01-02"}}</td>
+    <td>
+      {{if not .Users}}
+      <form method="post" action="/tokens/{{.Token.ID}}/delete" class="inline"
+            data-confirm="Delete Gitea token '{{.Token.Name}}'? This cannot be undone.">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button class="dangerbtn">Delete</button>
+      </form>
+      {{else}}<span class="muted">in use</span>{{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+
+<section class="mt">
+  <h2>Add a token</h2>
+  <form method="post" action="/tokens" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Name <input name="name" placeholder="e.g. gitea-ci" required></label>
+    <label>Token <input type="password" name="token" placeholder="Gitea API token" required>
+      <small>stored encrypted; never written to logs and never shown again</small></label>
+    <button type="submit">Add token</button>
+  </form>
+</section>
+{{template "foot" .}}

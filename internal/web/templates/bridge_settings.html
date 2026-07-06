@@ -17,7 +17,17 @@
     <label>Owner <input name="gitea_owner" value="{{$b.GiteaOwner}}" required></label>
     <label>Repository <input name="gitea_repo" value="{{$b.GiteaRepo}}" required></label>
     <label>Gitea SSH URL <input name="gitea_ssh_url" value="{{$b.GiteaSSHURL}}"></label>
-    <label>Gitea API token <input type="password" name="gitea_token" placeholder="leave empty to keep current token"></label>
+    <label>Gitea API token
+      <select name="gitea_token_id">
+        <option value="">➕ Add a new token below</option>
+        {{range .GiteaTokens}}<option value="{{.ID}}" {{if and $b.GiteaTokenID (eq .ID (deref_i $b.GiteaTokenID))}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <label>New token name <input name="new_token_name" placeholder="defaults to the slug">
+      <small>only used when adding a new token below</small></label>
+    <label>New token <input type="password" name="gitea_token">
+      <small>keep the selected token, pick another from the shared
+      <a href="/tokens">tokens</a> list, or paste a new one here to add it.</small></label>
   </fieldset>
   <fieldset class="danger"><legend>Filter — changing this rewrites ALL filtered SHAs</legend>
     <p class="muted">Determinism only holds for an unchanged filter. Editing excluded paths

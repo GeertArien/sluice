@@ -63,6 +63,14 @@ container's default identity, so you can instead mount one key for all bridges:
 The source key needs **push** access (promotion pushes the promoted branch and
 finalize deletes it), and the same identity is used for the Gitea push.
 
+**Gitea API token — Gitea tokens page.** Every bridge needs a Gitea API token to
+create the mirror repo and read/close pull requests. Add named tokens on the
+**Gitea tokens** page (stored encrypted at rest, never shown again) and select
+one from a dropdown when creating or editing a bridge, so a single token can be
+reused across bridges. You can also paste a new token directly in the bridge
+form — it's saved to the shared list automatically. A token that is still used
+by a bridge can't be deleted.
+
 ### Running on a bind-mounted volume (unraid / NAS)
 
 The container starts as root, takes ownership of the data directory, then

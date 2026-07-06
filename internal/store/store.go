@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS bridges (
   ssh_private_key_enc BLOB,
   ssh_public_key TEXT NOT NULL DEFAULT '',
   ssh_key_id INTEGER,
+  gitea_token_id INTEGER,
   status TEXT NOT NULL DEFAULT 'paused',
   last_sync_at TIMESTAMP,
   last_sync_ok INTEGER,
@@ -104,6 +105,12 @@ CREATE TABLE IF NOT EXISTS ssh_keys (
   private_key_enc BLOB NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS gitea_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  token_enc BLOB NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS host_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   host TEXT NOT NULL,
@@ -123,6 +130,7 @@ CREATE TABLE IF NOT EXISTS host_keys (
 		{"ssh_public_key", "TEXT NOT NULL DEFAULT ''"},
 		{"ssh_key_id", "INTEGER"},
 		{"promote_ignore_paths", "TEXT NOT NULL DEFAULT '[]'"},
+		{"gitea_token_id", "INTEGER"},
 	} {
 		if err := s.addColumnIfMissing("bridges", c.col, c.def); err != nil {
 			return err
@@ -131,7 +139,53 @@ CREATE TABLE IF NOT EXISTS host_keys (
 	// Migrate any legacy per-bridge inline keys into named ssh_keys rows so
 	// they keep working under the account-level key model. Idempotent: once a
 	// bridge has ssh_key_id set it is excluded.
-	return s.migrateInlineKeys()
+	if err := s.migrateInlineKeys(); err != nil {
+		return err
+	}
+	// Likewise move legacy per-bridge inline Gitea tokens into the shared,
+	// named gitea_tokens table so they can be reused and selected from a list.
+	return s.migrateInlineTokens()
+}
+
+// migrateInlineTokens moves pre-existing per-bridge Gitea API tokens into the
+// gitea_tokens table and links them via gitea_token_id. Idempotent: once a
+// bridge has gitea_token_id set it is excluded.
+func (s *Store) migrateInlineTokens() error {
+	rows, err := s.DB.Query(`SELECT id, slug, gitea_token_enc
+ FROM bridges WHERE gitea_token_enc IS NOT NULL AND gitea_token_id IS NULL`)
+	if err != nil {
+		return err
+	}
+	type legacy struct {
+		id    int64
+		slug  string
+		token []byte
+	}
+	var pending []legacy
+	for rows.Next() {
+		var l legacy
+		if err := rows.Scan(&l.id, &l.slug, &l.token); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, l := range pending {
+		res, err := s.DB.Exec(`INSERT INTO gitea_tokens (name, token_enc) VALUES (?,?)`,
+			"bridge-"+l.slug, l.token)
+		if err != nil {
+			return err
+		}
+		tokenID, _ := res.LastInsertId()
+		if _, err := s.DB.Exec(`UPDATE bridges SET gitea_token_id=? WHERE id=?`, tokenID, l.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateInlineKeys moves pre-existing per-bridge SSH keys into the ssh_keys
@@ -226,6 +280,7 @@ type Bridge struct {
 	ScheduleCron       string
 	WebhookSecretEnc   []byte
 	SSHKeyID           *int64
+	GiteaTokenID       *int64
 	Status             string
 	LastSyncAt         *time.Time
 	LastSyncOK         *bool
@@ -252,7 +307,8 @@ func fromJSONArr(s string) []string {
 const bridgeCols = `id, name, slug, source_remote_url, gitea_base_url, gitea_owner,
  gitea_repo, gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches,
  sync_globs, tripwire_strings, promote_name, promote_email, promote_keep_trailer,
- promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id, status,
+ promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id,
+ gitea_token_id, status,
  last_sync_at, last_sync_ok, last_verified_at, last_verify_ok, created_at, updated_at`
 
 func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
@@ -260,12 +316,12 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	var excl, branches, globs, tripwires, ignorePaths string
 	var lastSyncOK, lastVerifyOK sql.NullBool
 	var lastSyncAt, lastVerifiedAt sql.NullTime
-	var sshKeyID sql.NullInt64
+	var sshKeyID, giteaTokenID sql.NullInt64
 	err := row.Scan(&b.ID, &b.Name, &b.Slug, &b.SourceRemoteURL, &b.GiteaBaseURL,
 		&b.GiteaOwner, &b.GiteaRepo, &b.GiteaSSHURL, &b.GiteaTokenEnc,
 		&excl, &branches, &globs, &tripwires,
 		&b.PromoteName, &b.PromoteEmail, &b.PromoteKeepTrailer, &b.PromoteSignoff,
-		&ignorePaths, &b.ScheduleCron, &b.WebhookSecretEnc, &sshKeyID, &b.Status,
+		&ignorePaths, &b.ScheduleCron, &b.WebhookSecretEnc, &sshKeyID, &giteaTokenID, &b.Status,
 		&lastSyncAt, &lastSyncOK, &lastVerifiedAt, &lastVerifyOK,
 		&b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -276,6 +332,9 @@ func scanBridge(row interface{ Scan(...any) error }) (*Bridge, error) {
 	}
 	if sshKeyID.Valid {
 		b.SSHKeyID = &sshKeyID.Int64
+	}
+	if giteaTokenID.Valid {
+		b.GiteaTokenID = &giteaTokenID.Int64
 	}
 	b.ExcludedPaths = fromJSONArr(excl)
 	b.SyncBranches = fromJSONArr(branches)
@@ -302,13 +361,14 @@ func (s *Store) CreateBridge(b *Bridge) error {
  (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo,
   gitea_ssh_url, gitea_token_enc, excluded_paths, sync_branches, sync_globs,
   tripwire_strings, promote_name, promote_email, promote_keep_trailer,
-  promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id, status)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  promote_signoff, promote_ignore_paths, schedule_cron, webhook_secret_enc, ssh_key_id,
+  gitea_token_id, status)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.Name, b.Slug, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
 		b.PromoteKeepTrailer, b.PromoteSignoff, jsonArr(b.PromoteIgnorePaths), b.ScheduleCron, b.WebhookSecretEnc,
-		b.SSHKeyID, b.Status)
+		b.SSHKeyID, b.GiteaTokenID, b.Status)
 	if err != nil {
 		return err
 	}
@@ -322,13 +382,13 @@ func (s *Store) UpdateBridge(b *Bridge) error {
  gitea_ssh_url=?, gitea_token_enc=?, excluded_paths=?, sync_branches=?,
  sync_globs=?, tripwire_strings=?, promote_name=?, promote_email=?,
  promote_keep_trailer=?, promote_signoff=?, promote_ignore_paths=?, schedule_cron=?,
- webhook_secret_enc=?, ssh_key_id=?,
+ webhook_secret_enc=?, ssh_key_id=?, gitea_token_id=?,
  status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		b.Name, b.SourceRemoteURL, b.GiteaBaseURL, b.GiteaOwner, b.GiteaRepo,
 		b.GiteaSSHURL, b.GiteaTokenEnc, jsonArr(b.ExcludedPaths), jsonArr(b.SyncBranches),
 		jsonArr(b.SyncGlobs), jsonArr(b.TripwireStrings), b.PromoteName, b.PromoteEmail,
 		b.PromoteKeepTrailer, b.PromoteSignoff, jsonArr(b.PromoteIgnorePaths), b.ScheduleCron,
-		b.WebhookSecretEnc, b.SSHKeyID, b.Status, b.ID)
+		b.WebhookSecretEnc, b.SSHKeyID, b.GiteaTokenID, b.Status, b.ID)
 	return err
 }
 
@@ -411,6 +471,82 @@ func (s *Store) BridgesUsingSSHKey(id int64) ([]string, error) {
 
 func (s *Store) DeleteSSHKey(id int64) error {
 	_, err := s.DB.Exec(`DELETE FROM ssh_keys WHERE id=?`, id)
+	return err
+}
+
+// ---------- gitea tokens (account-level, named, reusable across bridges) ----------
+
+type GiteaToken struct {
+	ID        int64
+	Name      string
+	TokenEnc  []byte
+	CreatedAt time.Time
+}
+
+func (s *Store) CreateGiteaToken(t *GiteaToken) error {
+	res, err := s.DB.Exec(`INSERT INTO gitea_tokens (name, token_enc) VALUES (?,?)`,
+		t.Name, t.TokenEnc)
+	if err != nil {
+		return err
+	}
+	t.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func scanGiteaToken(row interface{ Scan(...any) error }) (*GiteaToken, error) {
+	t := &GiteaToken{}
+	err := row.Scan(&t.ID, &t.Name, &t.TokenEnc, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (s *Store) GiteaTokenByID(id int64) (*GiteaToken, error) {
+	return scanGiteaToken(s.DB.QueryRow(`SELECT id, name, token_enc, created_at FROM gitea_tokens WHERE id=?`, id))
+}
+
+func (s *Store) GiteaTokens() ([]*GiteaToken, error) {
+	rows, err := s.DB.Query(`SELECT id, name, token_enc, created_at FROM gitea_tokens ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*GiteaToken
+	for rows.Next() {
+		t, err := scanGiteaToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// BridgesUsingGiteaToken returns the slugs of bridges referencing a token, used
+// to block deletion of a token still in use.
+func (s *Store) BridgesUsingGiteaToken(id int64) ([]string, error) {
+	rows, err := s.DB.Query(`SELECT slug FROM bridges WHERE gitea_token_id=? ORDER BY slug`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, rows.Err()
+}
+
+func (s *Store) DeleteGiteaToken(id int64) error {
+	_, err := s.DB.Exec(`DELETE FROM gitea_tokens WHERE id=?`, id)
 	return err
 }
 
