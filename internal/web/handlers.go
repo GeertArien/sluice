@@ -89,12 +89,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // ---------- bridge create (init wizard, spec §5.1) ----------
 
 func (s *Server) handleBridgeNewForm(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, r, "bridge_new.html", map[string]any{"Form": url.Values{}, "SSHKeys": s.sshKeysOrNil()})
+	s.renderPage(w, r, "bridge_new.html", map[string]any{
+		"Form": url.Values{}, "SSHKeys": s.sshKeysOrNil(), "GiteaTokens": s.giteaTokensOrNil(),
+	})
 }
 
 func (s *Server) sshKeysOrNil() []*store.SSHKey {
 	keys, _ := s.Store.SSHKeys()
 	return keys
+}
+
+func (s *Server) giteaTokensOrNil() []*store.GiteaToken {
+	tokens, _ := s.Store.GiteaTokens()
+	return tokens
 }
 
 func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
@@ -155,6 +162,49 @@ func (s *Server) applySSHKeyForm(r *http.Request, b *store.Bridge) (managed bool
 	return true, nil
 }
 
+// applyGiteaTokenForm resolves the Gitea API token from the form and links the
+// bridge to a shared, named token via gitea_token_id. Either an existing token
+// is selected (gitea_token_id) or a new one is pasted (gitea_token, optionally
+// named new_token_name) and saved to the shared list. When neither is provided
+// the bridge keeps its current token; if it has none, that is an error.
+func (s *Server) applyGiteaTokenForm(r *http.Request, b *store.Bridge) error {
+	if sel := strings.TrimSpace(r.PostFormValue("gitea_token_id")); sel != "" {
+		id, err := strconv.ParseInt(sel, 10, 64)
+		if err != nil {
+			return errors.New("invalid Gitea token selection")
+		}
+		if _, err := s.Store.GiteaTokenByID(id); err != nil {
+			return errors.New("the selected Gitea token no longer exists")
+		}
+		b.GiteaTokenID = &id
+		b.GiteaTokenEnc = nil
+		return nil
+	}
+	token := strings.TrimSpace(r.PostFormValue("gitea_token"))
+	if token == "" {
+		if b.GiteaTokenID == nil && len(b.GiteaTokenEnc) == 0 {
+			return errors.New("a Gitea API token is required: select a saved token or paste a new one")
+		}
+		return nil // keep the bridge's current token
+	}
+	name := strings.TrimSpace(r.PostFormValue("new_token_name"))
+	if name == "" {
+		name = b.Slug
+	}
+	enc, err := s.Box.Encrypt(token)
+	if err != nil {
+		return fmt.Errorf("encrypt token: %w", err)
+	}
+	t := &store.GiteaToken{Name: name, TokenEnc: enc}
+	if err := s.Store.CreateGiteaToken(t); err != nil {
+		return errors.New("could not save the new Gitea token (name already taken?): " + err.Error())
+	}
+	s.Store.Audit(b.ID, "admin", "gitea_token_created", map[string]any{"name": name})
+	b.GiteaTokenID = &t.ID
+	b.GiteaTokenEnc = nil
+	return nil
+}
+
 func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 	b := &store.Bridge{Status: "paused"}
 	formErr := s.parseBridgeForm(r, b)
@@ -162,19 +212,20 @@ func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 	if formErr == nil && !slugRe.MatchString(b.Slug) {
 		formErr = errors.New("slug must be lowercase letters, digits and dashes (2-63 chars)")
 	}
-	token := r.PostFormValue("gitea_token")
-	if formErr == nil && token == "" {
-		formErr = errors.New("a Gitea API token is required")
+	renderNewErr := func(msg string) {
+		s.renderPage(w, r, "bridge_new.html", map[string]any{
+			"Error": msg, "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil(), "GiteaTokens": s.giteaTokensOrNil(),
+		})
 	}
 	if formErr != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": formErr.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
+		renderNewErr(formErr.Error())
+		return
+	}
+	if err := s.applyGiteaTokenForm(r, b); err != nil {
+		renderNewErr(err.Error())
 		return
 	}
 	var err error
-	if b.GiteaTokenEnc, err = s.Box.Encrypt(token); err != nil {
-		httpError(w, 500, "encrypt token: %v", err)
-		return
-	}
 	webhookSecret := randHex(24)
 	if b.WebhookSecretEnc, err = s.Box.Encrypt(webhookSecret); err != nil {
 		httpError(w, 500, "encrypt webhook secret: %v", err)
@@ -182,11 +233,11 @@ func (s *Server) handleBridgeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	managedKey, sshErr := s.applySSHKeyForm(r, b)
 	if sshErr != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": sshErr.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
+		renderNewErr(sshErr.Error())
 		return
 	}
 	if err := s.Store.CreateBridge(b); err != nil {
-		s.renderPage(w, r, "bridge_new.html", map[string]any{"Error": "create failed (slug taken?): " + err.Error(), "Form": r.PostForm, "SSHKeys": s.sshKeysOrNil()})
+		renderNewErr("create failed (slug taken?): " + err.Error())
 		return
 	}
 	s.Store.Audit(b.ID, "admin", "bridge_created", map[string]any{"slug": b.Slug, "managed_ssh_key": managedKey})
@@ -248,7 +299,8 @@ func (s *Server) handleBridgeSettingsForm(w http.ResponseWriter, r *http.Request
 		webhookSecret, _ = s.Box.Decrypt(b.WebhookSecretEnc)
 	}
 	s.renderPage(w, r, "bridge_settings.html", map[string]any{
-		"Bridge": b, "WebhookSecret": webhookSecret, "Error": "", "SSHKeys": s.sshKeysOrNil(),
+		"Bridge": b, "WebhookSecret": webhookSecret, "Error": "",
+		"SSHKeys": s.sshKeysOrNil(), "GiteaTokens": s.giteaTokensOrNil(),
 	})
 }
 
@@ -264,20 +316,17 @@ func (s *Server) handleBridgeSettings(w http.ResponseWriter, r *http.Request) {
 			webhookSecret, _ = s.Box.Decrypt(b.WebhookSecretEnc)
 		}
 		s.renderPage(w, r, "bridge_settings.html", map[string]any{
-			"Bridge": b, "WebhookSecret": webhookSecret, "Error": msg, "SSHKeys": s.sshKeysOrNil(),
+			"Bridge": b, "WebhookSecret": webhookSecret, "Error": msg,
+			"SSHKeys": s.sshKeysOrNil(), "GiteaTokens": s.giteaTokensOrNil(),
 		})
 	}
 	if err := s.parseBridgeForm(r, b); err != nil {
 		renderErr(err.Error())
 		return
 	}
-	if token := r.PostFormValue("gitea_token"); token != "" {
-		enc, err := s.Box.Encrypt(token)
-		if err != nil {
-			httpError(w, 500, "encrypt token: %v", err)
-			return
-		}
-		b.GiteaTokenEnc = enc
+	if err := s.applyGiteaTokenForm(r, b); err != nil {
+		renderErr(err.Error())
+		return
 	}
 	if _, err := s.applySSHKeyForm(r, b); err != nil {
 		renderErr(err.Error())
@@ -679,6 +728,78 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(0, "admin", "ssh_key_deleted", map[string]any{"id": id})
 	http.Redirect(w, r, "/keys", http.StatusSeeOther)
+}
+
+// ---------- gitea tokens (account-level) ----------
+
+type tokenRow struct {
+	Token *store.GiteaToken
+	Users []string // bridge slugs referencing it
+}
+
+func (s *Server) renderGiteaTokens(w http.ResponseWriter, r *http.Request, errMsg string) {
+	tokens, err := s.Store.GiteaTokens()
+	if err != nil {
+		httpError(w, 500, "load tokens: %v", err)
+		return
+	}
+	rows := make([]*tokenRow, len(tokens))
+	for i, t := range tokens {
+		users, _ := s.Store.BridgesUsingGiteaToken(t.ID)
+		rows[i] = &tokenRow{Token: t, Users: users}
+	}
+	s.renderPage(w, r, "tokens.html", map[string]any{"Rows": rows, "Error": errMsg})
+}
+
+func (s *Server) handleGiteaTokens(w http.ResponseWriter, r *http.Request) {
+	s.renderGiteaTokens(w, r, "")
+}
+
+func (s *Server) handleGiteaTokenCreate(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PostFormValue("name"))
+	token := strings.TrimSpace(r.PostFormValue("token"))
+	if name == "" {
+		s.renderGiteaTokens(w, r, "a name is required")
+		return
+	}
+	if token == "" {
+		s.renderGiteaTokens(w, r, "paste the Gitea API token")
+		return
+	}
+	enc, err := s.Box.Encrypt(token)
+	if err != nil {
+		httpError(w, 500, "encrypt token: %v", err)
+		return
+	}
+	if err := s.Store.CreateGiteaToken(&store.GiteaToken{Name: name, TokenEnc: enc}); err != nil {
+		s.renderGiteaTokens(w, r, "could not save token (name already taken?): "+err.Error())
+		return
+	}
+	s.Store.Audit(0, "admin", "gitea_token_created", map[string]any{"name": name})
+	http.Redirect(w, r, "/tokens", http.StatusSeeOther)
+}
+
+func (s *Server) handleGiteaTokenDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	users, err := s.Store.BridgesUsingGiteaToken(id)
+	if err != nil {
+		httpError(w, 500, "%v", err)
+		return
+	}
+	if len(users) > 0 {
+		s.renderGiteaTokens(w, r, "cannot delete: still used by "+strings.Join(users, ", "))
+		return
+	}
+	if err := s.Store.DeleteGiteaToken(id); err != nil {
+		httpError(w, 500, "delete token: %v", err)
+		return
+	}
+	s.Store.Audit(0, "admin", "gitea_token_deleted", map[string]any{"id": id})
+	http.Redirect(w, r, "/tokens", http.StatusSeeOther)
 }
 
 // ---------- trusted hosts (pinned known_hosts entries) ----------

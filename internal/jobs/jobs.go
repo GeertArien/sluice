@@ -249,14 +249,36 @@ func (s *Service) workerLoop(ctx context.Context) {
 	}
 }
 
+// giteaToken decrypts a bridge's Gitea API token. It prefers a shared, named
+// token referenced by gitea_token_id and falls back to a legacy per-bridge
+// inline token for databases not yet migrated.
+func (s *Service) giteaToken(b *store.Bridge) (string, error) {
+	if b.GiteaTokenID != nil {
+		t, err := s.Store.GiteaTokenByID(*b.GiteaTokenID)
+		if err != nil {
+			return "", fmt.Errorf("bridge references a missing Gitea token: %w", err)
+		}
+		token, err := s.Box.Decrypt(t.TokenEnc)
+		if err != nil {
+			return "", fmt.Errorf("decrypt gitea token: %w", err)
+		}
+		return token, nil
+	}
+	if len(b.GiteaTokenEnc) > 0 {
+		token, err := s.Box.Decrypt(b.GiteaTokenEnc)
+		if err != nil {
+			return "", fmt.Errorf("decrypt gitea token: %w", err)
+		}
+		return token, nil
+	}
+	return "", nil
+}
+
 // runtimeBridge decrypts secrets and builds the engine view of a bridge.
 func (s *Service) runtimeBridge(b *store.Bridge) (*engine.Bridge, string, error) {
-	token := ""
-	if len(b.GiteaTokenEnc) > 0 {
-		var err error
-		if token, err = s.Box.Decrypt(b.GiteaTokenEnc); err != nil {
-			return nil, "", fmt.Errorf("decrypt gitea token: %w", err)
-		}
+	token, err := s.giteaToken(b)
+	if err != nil {
+		return nil, "", err
 	}
 	return &engine.Bridge{
 		Slug:               b.Slug,

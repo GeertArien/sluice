@@ -20,8 +20,17 @@ verification result and activate it.</p>
     <label>Owner (org or user) <input name="gitea_owner" value="{{.Form.Get "gitea_owner"}}" required></label>
     <label>Repository name <input name="gitea_repo" value="{{.Form.Get "gitea_repo"}}" required></label>
     <label>Gitea SSH URL <input name="gitea_ssh_url" value="{{.Form.Get "gitea_ssh_url"}}" placeholder="left empty: taken from the API after repo creation"></label>
-    <label>Gitea API token <input type="password" name="gitea_token" required>
-      <small>stored encrypted; never written to logs</small></label>
+    <label>Gitea API token
+      <select name="gitea_token_id">
+        <option value="">➕ Add a new token below</option>
+        {{range .GiteaTokens}}<option value="{{.ID}}" {{if eq ($.Form.Get "gitea_token_id") (printf "%d" .ID)}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <label>New token name <input name="new_token_name" value="{{.Form.Get "new_token_name"}}" placeholder="defaults to the slug">
+      <small>only used when adding a new token below</small></label>
+    <label>New token <input type="password" name="gitea_token">
+      <small>select a saved token above, or paste a new one here to add it to the shared
+      <a href="/tokens">tokens</a> list. Stored encrypted; never written to logs.</small></label>
   </fieldset>
   <fieldset><legend>Filter</legend>
     <label>Excluded paths (one per line) <textarea name="excluded_paths" rows="4" required placeholder="internal/secret-sauce

@@ -91,3 +91,83 @@ func TestMigrationUpgradesOldDatabase(t *testing.T) {
 		t.Fatalf("expected exactly 1 migrated key, got %d", len(keys))
 	}
 }
+
+// TestMigrationMovesInlineGiteaToken builds a pre-shared-token bridges table
+// with a legacy inline Gitea token and a tokenless row, opens it through Open
+// and confirms the inline token migrates into the named gitea_tokens table and
+// is referenced by gitea_token_id, while the tokenless row stays unlinked.
+func TestMigrationMovesInlineGiteaToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE bridges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
+  source_remote_url TEXT NOT NULL, gitea_base_url TEXT NOT NULL,
+  gitea_owner TEXT NOT NULL, gitea_repo TEXT NOT NULL, gitea_ssh_url TEXT NOT NULL,
+  gitea_token_enc BLOB, excluded_paths TEXT NOT NULL DEFAULT '[]',
+  sync_branches TEXT NOT NULL DEFAULT '[]', sync_globs TEXT NOT NULL DEFAULT '[]',
+  tripwire_strings TEXT NOT NULL DEFAULT '[]',
+  promote_name TEXT NOT NULL DEFAULT '', promote_email TEXT NOT NULL DEFAULT '',
+  promote_keep_trailer INTEGER NOT NULL DEFAULT 1, promote_signoff INTEGER NOT NULL DEFAULT 0,
+  schedule_cron TEXT NOT NULL DEFAULT '', webhook_secret_enc BLOB,
+  status TEXT NOT NULL DEFAULT 'paused',
+  last_sync_at TIMESTAMP, last_sync_ok INTEGER,
+  last_verified_at TIMESTAMP, last_verify_ok INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO bridges
+ (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo, gitea_ssh_url, gitea_token_enc)
+ VALUES ('Tok','tok','/x','http://g','o','r','/g', ?)`, []byte("encrypted-token")); err != nil {
+		t.Fatal(err)
+	}
+	// A bridge with no token must not get a token row.
+	if _, err := db.Exec(`INSERT INTO bridges
+ (name, slug, source_remote_url, gitea_base_url, gitea_owner, gitea_repo, gitea_ssh_url)
+ VALUES ('None','none','/x','http://g','o','r','/g')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open/migrate old db: %v", err)
+	}
+
+	b, err := st.BridgeBySlug("tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.GiteaTokenID == nil {
+		t.Fatal("inline token was not migrated to gitea_token_id")
+	}
+	tk, err := st.GiteaTokenByID(*b.GiteaTokenID)
+	if err != nil {
+		t.Fatalf("migrated token missing: %v", err)
+	}
+	if tk.Name != "bridge-tok" || string(tk.TokenEnc) != "encrypted-token" {
+		t.Fatalf("migrated token wrong: %+v", tk)
+	}
+
+	none, err := st.BridgeBySlug("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if none.GiteaTokenID != nil {
+		t.Fatalf("tokenless bridge got a token: %v", none.GiteaTokenID)
+	}
+
+	// Migration is idempotent: re-opening doesn't create a duplicate token.
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks, _ := st2.GiteaTokens(); len(toks) != 1 {
+		t.Fatalf("expected exactly 1 migrated token, got %d", len(toks))
+	}
+}
