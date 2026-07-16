@@ -699,6 +699,18 @@ func (s *Store) FinishJob(id int64, status, errorSummary string) error {
 	return err
 }
 
+// DismissJob clears a job stuck in needs_attention by moving it to the terminal
+// 'dismissed' status so it stops counting toward the bridge's attention badge.
+// It only touches needs_attention rows; the number of rows changed lets the
+// caller tell whether the dismissal applied.
+func (s *Store) DismissJob(id int64) (int64, error) {
+	res, err := s.DB.Exec(`UPDATE jobs SET status='dismissed' WHERE id=? AND status='needs_attention'`, id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ResetRunningJobs marks jobs left 'running' by a crash as failed (startup).
 func (s *Store) ResetRunningJobs() error {
 	_, err := s.DB.Exec(`UPDATE jobs SET status='failed',

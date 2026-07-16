@@ -743,6 +743,141 @@ func TestCleanWorkspaceAbortsStaleAmState(t *testing.T) {
 	}
 }
 
+// tgit / tgitErr run git with a fixed identity and no ambient config, for the
+// standalone tests below that don't use the filter-repo fixture.
+func tgitEnv() []string {
+	return append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+}
+
+func tgit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = tgitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func tgitErr(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = tgitEnv()
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// TestFetchMirrorObjectsEnables3WayMerge reproduces the promotion failure where
+// `git am --3way` cannot reconstruct the base tree because the patch's recorded
+// blobs live only on the Gitea mirror, and asserts fetchMirrorObjects fixes it.
+func TestFetchMirrorObjectsEnables3WayMerge(t *testing.T) {
+	dir := t.TempDir()
+	write := func(repo, name, content string) {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Mirror upstream: base A/B/C on main; an agent branch appends D.
+	mo := filepath.Join(dir, "mirror-origin")
+	if err := os.MkdirAll(mo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tgit(t, mo, "init", "-q", "-b", "main", ".")
+	write(mo, "f.txt", "A\nB\nC\n")
+	tgit(t, mo, "add", ".")
+	tgit(t, mo, "commit", "-qm", "base")
+	tgit(t, mo, "checkout", "-q", "-b", "agent")
+	write(mo, "f.txt", "A\nB\nC\nD\n")
+	tgit(t, mo, "commit", "-qam", "agent append D")
+	tgit(t, mo, "checkout", "-q", "main")
+
+	// Source upstream: base diverges (B -> B0) so the agent patch cannot apply
+	// directly, but IS 3-way-mergeable using the mirror's base blob.
+	so := filepath.Join(dir, "source-origin")
+	if err := os.MkdirAll(so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tgit(t, so, "init", "-q", "-b", "main", ".")
+	write(so, "f.txt", "A\nB0\nC\n")
+	tgit(t, so, "add", ".")
+	tgit(t, so, "commit", "-qm", "source base")
+
+	// Engine workspace layout: gitea-clone (mirror) + source-work (source).
+	workdir := filepath.Join(dir, "work")
+	slug := "b"
+	ws := filepath.Join(workdir, slug)
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tgit(t, ws, "clone", "-q", mo, "gitea-clone")
+	tgit(t, ws, "clone", "-q", so, "source-work")
+	gc := filepath.Join(ws, "gitea-clone")
+	sw := filepath.Join(ws, "source-work")
+
+	// Sluice's export step: patches generated from the mirror.
+	patches := filepath.Join(dir, "patches")
+	if err := os.MkdirAll(patches, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tgit(t, gc, "format-patch", "--binary", "-o", patches, "origin/main..origin/agent")
+	pfiles, _ := filepath.Glob(filepath.Join(patches, "*.patch"))
+	if len(pfiles) == 0 {
+		t.Fatal("no patches generated")
+	}
+	amArgs := append([]string{"am", "--3way"}, pfiles...)
+
+	// Without the mirror objects, the 3-way fallback cannot reconstruct the base.
+	tgit(t, sw, "checkout", "-q", "-B", "promoted")
+	if _, err := tgitErr(sw, amArgs...); err == nil {
+		_, _ = tgitErr(sw, "am", "--abort")
+		t.Fatal("expected git am --3way to fail without mirror objects")
+	}
+	_, _ = tgitErr(sw, "am", "--abort")
+
+	// The fix: fetch the mirror's objects into source-work, then it merges.
+	eng := New(workdir, "", "", &execx.Runner{Log: func(string) {}})
+	if err := eng.fetchMirrorObjects(context.Background(), &Bridge{Slug: slug}); err != nil {
+		t.Fatalf("fetchMirrorObjects: %v", err)
+	}
+	tgit(t, sw, "checkout", "-q", "-B", "promoted2")
+	if out, err := tgitErr(sw, amArgs...); err != nil {
+		t.Fatalf("git am --3way should succeed after fetch: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(sw, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "A\nB0\nC\nD\n" {
+		t.Fatalf("merged content = %q, want B0 kept and D appended", got)
+	}
+}
+
+// TestCleanWorkspaceForceRemovesUnabortableAmState covers the wedged case the
+// user hit: `git am --abort` cannot clear .git/rebase-apply (here because
+// source-work is not a valid repo, standing in for the ownership/permission
+// failure), so CleanWorkspace must force-remove it rather than leave every
+// future `git am` blocked by "previous rebase directory still exists".
+func TestCleanWorkspaceForceRemovesUnabortableAmState(t *testing.T) {
+	dir := t.TempDir()
+	workdir := filepath.Join(dir, "work")
+	slug := "b"
+	rebaseApply := filepath.Join(workdir, slug, "source-work", ".git", "rebase-apply")
+	if err := os.MkdirAll(rebaseApply, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eng := New(workdir, "", "", &execx.Runner{Log: func(string) {}})
+	eng.CleanWorkspace(context.Background(), &Bridge{Slug: slug})
+	if _, err := os.Stat(rebaseApply); err == nil {
+		t.Fatal("wedged rebase-apply not force-removed after git am --abort could not clear it")
+	}
+}
+
 func TestValidateExcludedPath(t *testing.T) {
 	valid := []string{"secret", "a/b", "deep/nested/dir", "with-dash_underscore"}
 	for _, p := range valid {

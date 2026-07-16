@@ -458,6 +458,52 @@ func TestBridgeCreateRequiresAToken(t *testing.T) {
 	}
 }
 
+func TestDismissNeedsAttentionJob(t *testing.T) {
+	ts, client, st := setup(t)
+	csrf := login(t, ts, client)
+
+	box, _ := secrets.New(strings.Repeat("ef", 32))
+	tokEnc, _ := box.Encrypt("tkn")
+	b := &store.Bridge{
+		Name: "Att", Slug: "att", SourceRemoteURL: "git@github.com:o/r.git",
+		GiteaBaseURL: "http://g", GiteaOwner: "ai", GiteaRepo: "att", GiteaSSHURL: "git@g:ai/att.git",
+		GiteaTokenEnc: tokEnc, ExcludedPaths: []string{"secret"}, SyncBranches: []string{"main"},
+		Status: "active",
+	}
+	if err := st.CreateBridge(b); err != nil {
+		t.Fatal(err)
+	}
+	// A promote job wedged in needs_attention (as an am conflict leaves it).
+	jobID, _ := st.EnqueueJob(b.ID, "promote", nil)
+	_ = st.FinishJob(jobID, "needs_attention", "git am conflict")
+
+	if na, _ := st.JobsNeedingAttention(b.ID); len(na) != 1 {
+		t.Fatalf("expected 1 needs_attention job, got %d", len(na))
+	}
+	// The job page offers a Dismiss action.
+	if _, body := get(t, client, ts.URL+"/jobs/"+strconv.FormatInt(jobID, 10)); !strings.Contains(body, "Dismiss") {
+		t.Fatal("job page missing Dismiss button")
+	}
+
+	resp, err := client.PostForm(ts.URL+"/jobs/"+strconv.FormatInt(jobID, 10)+"/dismiss", url.Values{"csrf": {csrf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Cleared from the attention list and moved to a terminal status.
+	if na, _ := st.JobsNeedingAttention(b.ID); len(na) != 0 {
+		t.Fatalf("job still needs attention after dismiss: %d", len(na))
+	}
+	j, _ := st.JobByID(jobID)
+	if j.Status != "dismissed" {
+		t.Fatalf("job status = %q, want dismissed", j.Status)
+	}
+	if _, na, _ := st.DashboardCounts(b.ID); na != 0 {
+		t.Fatalf("dashboard still counts %d needing attention", na)
+	}
+}
+
 func TestTrustedHostsScanTrustAndDelete(t *testing.T) {
 	ts, client, st, knownHosts := setupKH(t)
 	csrf := login(t, ts, client)

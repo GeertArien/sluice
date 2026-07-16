@@ -257,6 +257,12 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base, target st
 	if _, err := e.Runner.Run(ctx, work, "git", "fetch", "origin"); err != nil {
 		return nil, err
 	}
+	// Make the Gitea mirror's objects available so `git am --3way` can rebuild
+	// the base tree for patches whose recorded blobs live only on the mirror.
+	// Best-effort: failing only forfeits the 3-way fallback, so don't abort.
+	if err := e.fetchMirrorObjects(ctx, b); err != nil {
+		e.Runner.Log("warning: could not fetch mirror objects for 3-way merge: " + err.Error())
+	}
 	if _, err := e.Runner.Run(ctx, work, "git", "checkout", "-B", realBranch, baseReal); err != nil {
 		return nil, fmt.Errorf("checkout %s at %s: %w", realBranch, baseReal, err)
 	}

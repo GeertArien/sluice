@@ -596,9 +596,32 @@ func (s *Server) handleJobDetail(w http.ResponseWriter, r *http.Request) {
 	canRetry := job.Kind == "sync" || job.Kind == "verify" || job.Kind == "init" || job.Kind == "finalize"
 	s.renderPage(w, r, "job.html", map[string]any{
 		"Job": job, "Bridge": bridge,
-		"CanRetry": canRetry && (job.Status == "failed"),
-		"Running":  job.Status == "queued" || job.Status == "running",
+		"CanRetry":   canRetry && (job.Status == "failed"),
+		"CanDismiss": job.Status == "needs_attention",
+		"Running":    job.Status == "queued" || job.Status == "running",
 	})
+}
+
+func (s *Server) handleJobDismiss(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	job, err := s.Store.JobByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	n, err := s.Store.DismissJob(id)
+	if err != nil {
+		httpError(w, 500, "dismiss job: %v", err)
+		return
+	}
+	if n > 0 {
+		s.Store.Audit(job.BridgeID, "admin", "job_dismissed", map[string]any{"job_id": id, "kind": job.Kind})
+	}
+	http.Redirect(w, r, "/jobs/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
 func (s *Server) handleJobLog(w http.ResponseWriter, r *http.Request) {
