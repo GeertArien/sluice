@@ -332,6 +332,34 @@ func TestPromoteAppliesCRLFFiles(t *testing.T) {
 	}
 }
 
+// TestPromotePreservesIssueTagInSubject guards against git am's mailinfo
+// stripping bracketed subject prefixes: by default it removes every leading
+// [..] group, so "[SIMU-1736] foo" lands upstream as just "foo". --keep-non-patch
+// must strip only format-patch's own "[PATCH]" and keep the issue tag. Runs
+// through the identity-rewrite path too, as the production promotion did.
+func TestPromotePreservesIssueTagInSubject(t *testing.T) {
+	f := newFixture(t)
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "tagged")
+	f.commit(agent, "public/x.txt", "x\n", "[SIMU-1736] add native x")
+	f.git(agent, "push", "origin", "tagged")
+
+	// Identity rewrite on (matches the real promotion), which amends each
+	// commit with --no-edit and must not disturb the preserved subject.
+	f.bridge.PromoteName = "Bot"
+	f.bridge.PromoteEmail = "bot@example.com"
+
+	res, err := f.eng.Promote(context.Background(), f.bridge, "tagged", "main", "")
+	if err != nil {
+		t.Fatalf("promote failed: %v\nlog:\n%s", err, f.logs)
+	}
+	if subj := f.git(f.src, "log", "-1", "--format=%s", res.RealBranch); subj != "[SIMU-1736] add native x" {
+		t.Fatalf("issue tag stripped from promoted subject: %q", subj)
+	}
+}
+
 func TestRoundTripPromotionPreservesAuthorAndExcludedFiles(t *testing.T) {
 	f := newFixture(t)
 	f.initAndSync()

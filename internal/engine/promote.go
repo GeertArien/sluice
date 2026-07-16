@@ -281,7 +281,14 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base, target st
 	// even its own recorded pre-image blob ("does not apply to blobs recorded
 	// in its index"). Our patches always come from format-patch, never real
 	// e-mail, so keeping CR is always byte-correct.
-	amArgs := []string{"-c", "user.name=" + committerName, "-c", "user.email=" + committerEmail, "am", "--3way", "--keep-cr"}
+	//
+	// --keep-non-patch: mailinfo strips ALL leading [..] groups from the
+	// subject by default, which eats issue tags like "[SIMU-1736] ...".
+	// -b/--keep-non-patch limits stripping to bracket groups containing the
+	// word PATCH, so it removes the "[PATCH]" that format-patch adds while
+	// preserving the author's real subject and any [TICKET] prefix.
+	amArgs := []string{"-c", "user.name=" + committerName, "-c", "user.email=" + committerEmail,
+		"am", "--3way", "--keep-cr", "--keep-non-patch"}
 	if b.PromoteSignoff {
 		amArgs = append(amArgs, "--signoff")
 	}

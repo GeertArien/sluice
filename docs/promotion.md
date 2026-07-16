@@ -92,10 +92,13 @@ Step by step (`Engine.Promote`):
    pushed. There is no override ([spec §9.1](../spec.md)).
 7. **Apply onto real history** — in `source-work` (a working clone of the
    **source**): `git fetch origin`, `git checkout -B <target> <realBase>`,
-   then `git am --3way --keep-cr [--signoff] *.patch`. `--keep-cr` stops
-   `am`'s mail splitting from stripping carriage returns, which would corrupt
-   patches that touch CRLF files (Windows project files and the like). A
-   conflict stops here (see below).
+   then `git am --3way --keep-cr --keep-non-patch [--signoff] *.patch`.
+   `--keep-cr` stops `am`'s mail splitting from stripping carriage returns,
+   which would corrupt patches that touch CRLF files (Windows project files
+   and the like). `--keep-non-patch` stops mailinfo from eating bracketed
+   subject prefixes, so issue tags like `[SIMU-1736]` survive on the promoted
+   commits (only the `[PATCH]` that `format-patch` adds is removed). A conflict
+   stops here (see below).
 8. **Optional identity rewrite** — if a promote identity is configured,
    rewrite author **and** committer to it, preserving original author dates
    and adding a `Co-authored-by` trailer for the original agent (skipped when
