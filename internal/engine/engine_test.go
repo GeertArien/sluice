@@ -258,7 +258,45 @@ func TestPromoteRejectsWhenOnlyIgnoredPathsChanged(t *testing.T) {
 	}
 }
 
-// --- §13.3 round-trip ---
+// TestPreflightWithIgnoredPaths exercises the pre-flight screen when the bridge
+// has promotion-ignored paths. CommitCount is computed via a rev-list that
+// carries the "-- . :(exclude)…" pathspec, so a mis-ordered range would make
+// git exit 129 here (the reported bug). The count must reflect the commits that
+// still have changes after the ignored paths are stripped.
+func TestPreflightWithIgnoredPaths(t *testing.T) {
+	f := newFixture(t)
+	f.bridge.PromoteIgnorePaths = []string{"tooling"}
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "work")
+	// A mirror-only helper commit (dropped from the promotion) ...
+	f.commit(agent, "tooling/prebuilt.bin", "LIB\n", "add build helper")
+	// ... and two real changes that survive the exclude.
+	f.commit(agent, "public/a.txt", "a\n", "agent: change a")
+	f.commit(agent, "public/b.txt", "b\n", "agent: change b")
+	f.git(agent, "push", "origin", "work")
+
+	pf, err := f.eng.RunPreflight(context.Background(), f.bridge, "work", "main")
+	if err != nil {
+		t.Fatalf("preflight: %v\nlog:\n%s", err, f.logs)
+	}
+	if pf.CommitCount != 2 {
+		t.Fatalf("CommitCount = %d, want 2 (ignored-only commit excluded)", pf.CommitCount)
+	}
+	if pf.MergeCount != 0 {
+		t.Fatalf("MergeCount = %d, want 0", pf.MergeCount)
+	}
+	if !pf.GuardOK {
+		t.Fatalf("guard should pass, got detail: %s", pf.GuardDetail)
+	}
+	// The commit preview must exclude the ignored-only commit as well.
+	for _, c := range pf.Commits {
+		if strings.Contains(c.Subject, "build helper") {
+			t.Fatalf("ignored-only commit leaked into the preview: %+v", pf.Commits)
+		}
+	}
+}
 
 func TestRoundTripPromotionPreservesAuthorAndExcludedFiles(t *testing.T) {
 	f := newFixture(t)

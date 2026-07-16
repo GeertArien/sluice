@@ -102,8 +102,11 @@ func (e *Engine) resolveBranch(ctx context.Context, b *Bridge, branch, base stri
 }
 
 func (e *Engine) countRange(ctx context.Context, dir, rangeExpr string, extra ...string) (int, error) {
-	args := append([]string{"rev-list", "--count"}, extra...)
-	args = append(args, rangeExpr)
+	// The revision range must precede extra args: pathspec excludes arrive as
+	// "-- . :(exclude)…", and anything after "--" is treated as a path, so a
+	// range placed after it is misparsed (git exits 129). Range first keeps
+	// both flag extras (e.g. --merges) and pathspec extras valid.
+	args := append([]string{"rev-list", "--count", rangeExpr}, extra...)
 	out, err := e.Runner.Quiet(ctx, dir, "git", args...)
 	if err != nil {
 		return 0, err
