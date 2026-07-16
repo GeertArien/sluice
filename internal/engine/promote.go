@@ -275,7 +275,13 @@ func (e *Engine) Promote(ctx context.Context, b *Bridge, branch, base, target st
 	if committerName == "" {
 		committerName, committerEmail = "Sluice", "sluice@localhost"
 	}
-	amArgs := []string{"-c", "user.name=" + committerName, "-c", "user.email=" + committerEmail, "am", "--3way"}
+	// --keep-cr: am splits patches via mailsplit, which strips CR from line
+	// ends by default. For files committed with CRLF endings (e.g. Windows
+	// project files) that corrupts the patch so it applies to nothing — not
+	// even its own recorded pre-image blob ("does not apply to blobs recorded
+	// in its index"). Our patches always come from format-patch, never real
+	// e-mail, so keeping CR is always byte-correct.
+	amArgs := []string{"-c", "user.name=" + committerName, "-c", "user.email=" + committerEmail, "am", "--3way", "--keep-cr"}
 	if b.PromoteSignoff {
 		amArgs = append(amArgs, "--signoff")
 	}

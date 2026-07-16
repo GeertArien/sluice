@@ -298,6 +298,40 @@ func TestPreflightWithIgnoredPaths(t *testing.T) {
 	}
 }
 
+// TestPromoteAppliesCRLFFiles guards against git am's mailsplit stripping CR
+// from patch lines: without --keep-cr, a patch touching a CRLF file (e.g. a
+// Windows .vcxproj) is corrupted in transit and fails with "does not apply to
+// blobs recorded in its index" even though every blob is present — the bug hit
+// in production on SimMath/msvc143/math_model.vcxproj.
+func TestPromoteAppliesCRLFFiles(t *testing.T) {
+	f := newFixture(t)
+	// A CRLF file in the source history, like an MSVC project file.
+	f.commit(f.dev, "public/app.vcxproj", "<A>\r\n<B>\r\n<C>\r\n", "add vcxproj")
+	f.git(f.dev, "push", "origin", "main")
+	f.initAndSync()
+
+	agent := f.agentClone("agent")
+	f.git(agent, "checkout", "-b", "crlf-edit")
+	// Agent edits the middle of the CRLF file, plus an LF file — mirroring
+	// the mixed patch that failed in production.
+	f.commit(agent, "public/app.vcxproj", "<A>\r\n<B2>\r\n<C>\r\n", "agent: edit vcxproj")
+	f.commit(agent, "public/code.txt", "code\n", "agent: add code")
+	f.git(agent, "push", "origin", "crlf-edit")
+
+	res, err := f.eng.Promote(context.Background(), f.bridge, "crlf-edit", "main", "")
+	if err != nil {
+		t.Fatalf("promote of CRLF edit failed: %v\nlog:\n%s", err, f.logs)
+	}
+	// The CRLF endings must survive the format-patch → am round-trip intact.
+	raw, gerr := f.gitErr(f.src, "cat-file", "blob", res.RealBranch+":public/app.vcxproj")
+	if gerr != nil {
+		t.Fatalf("cat-file: %v\n%s", gerr, raw)
+	}
+	if !strings.Contains(raw, "<B2>\r") {
+		t.Fatalf("CRLF endings lost or edit missing upstream: %q", raw)
+	}
+}
+
 func TestRoundTripPromotionPreservesAuthorAndExcludedFiles(t *testing.T) {
 	f := newFixture(t)
 	f.initAndSync()
