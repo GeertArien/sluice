@@ -154,6 +154,15 @@ flowchart TD
     AM -->|yes| OK[pushed to source]
 ```
 
+Before applying, promotion makes the mirror's objects available in
+`source-work` (a `git fetch` from the local `gitea-clone` into a
+`refs/gitea-mirror/*` namespace). `git am --3way` needs the blobs recorded in
+each patch's `index` line to rebuild the base tree; `source-work` is a clone of
+the **source** and never received the mirror's objects, so without this a patch
+that needs the 3-way fallback fails with *"could not build fake ancestor" /
+"does not apply to blobs recorded in its index"* even when the change would
+merge cleanly.
+
 On an `am` conflict the workspace is **left mid-`am`** on purpose and the
 promotion is marked `needs_attention`. The UI offers three actions:
 
@@ -161,6 +170,12 @@ promotion is marked `needs_attention`. The UI offers three actions:
   push, then record the tip via "mark promoted manually";
 - **abort** — `git am --abort` and reset the workspace;
 - **mark promoted manually** — record the upstream tip SHA after a manual push.
+
+The **promote job** that hit the conflict also lands in `needs_attention`; once
+you've resolved or aborted the promotion, clear the job with **Dismiss** on its
+job page so it stops counting toward the bridge's attention badge. A wedged
+`git am` state (`.git/rebase-apply`) is force-cleared at the start of the next
+job, so a stuck am can never permanently block syncs or promotions.
 
 ## Finalization
 

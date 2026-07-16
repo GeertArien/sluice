@@ -122,14 +122,39 @@ func (e *Engine) ensureGiteaClone(ctx context.Context, b *Bridge) error {
 	return nil
 }
 
+// fetchMirrorObjects copies the Gitea mirror's objects into source-work so that
+// `git am --3way` can reconstruct the base tree for patches whose recorded blobs
+// exist only on the mirror. source-work is a clone of the SOURCE remote and
+// never received the mirror's objects, so without this the 3-way fallback fails
+// with "could not build fake ancestor" / "does not apply to blobs recorded in
+// its index" on any patch that needs it. The mirror's refs land under a
+// dedicated refs/gitea-mirror/* namespace and are never pushed upstream.
+func (e *Engine) fetchMirrorObjects(ctx context.Context, b *Bridge) error {
+	_, err := e.Runner.Run(ctx, e.sourceWork(b), "git", "fetch", "--no-tags",
+		e.giteaClone(b), "+refs/remotes/origin/*:refs/gitea-mirror/*")
+	return err
+}
+
 // CleanWorkspace makes a workspace safe to run a new job in after a crash
 // (spec §7): abort stale `git am` state and drop leftover temp dirs.
 func (e *Engine) CleanWorkspace(ctx context.Context, b *Bridge) {
 	work := e.sourceWork(b)
-	if exists(filepath.Join(work, ".git", "rebase-apply")) || exists(filepath.Join(work, ".git", "rebase-merge")) {
+	rebaseApply := filepath.Join(work, ".git", "rebase-apply")
+	rebaseMerge := filepath.Join(work, ".git", "rebase-merge")
+	if exists(rebaseApply) || exists(rebaseMerge) {
 		e.Runner.Log("warning: stale am/rebase state found in source-work; aborting it")
 		_, _ = e.Runner.Quiet(ctx, work, "git", "am", "--abort")
 		_, _ = e.Runner.Quiet(ctx, work, "git", "rebase", "--abort")
+		// A wedged `git am` can leave rebase-apply behind (or the abort itself
+		// can fail), and then every future `git am` dies with "previous rebase
+		// directory .git/rebase-apply still exists but mbox given". Force-remove
+		// it and reset the tree so it can never permanently block the bridge.
+		if exists(rebaseApply) || exists(rebaseMerge) {
+			e.Runner.Log("warning: am/rebase state persisted after abort; force-clearing it")
+			_ = os.RemoveAll(rebaseApply)
+			_ = os.RemoveAll(rebaseMerge)
+			_, _ = e.Runner.Quiet(ctx, work, "git", "reset", "--hard")
+		}
 	}
 	entries, _ := os.ReadDir(e.ws(b))
 	for _, ent := range entries {

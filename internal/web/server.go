@@ -115,6 +115,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /promotions/{id}/abort", s.auth(s.handlePromotionAbort))
 	s.mux.HandleFunc("POST /promotions/{id}/mark-promoted", s.auth(s.handlePromotionMarkPromoted))
 	s.mux.HandleFunc("GET /jobs/{id}", s.auth(s.handleJobDetail))
+	s.mux.HandleFunc("POST /jobs/{id}/dismiss", s.auth(s.handleJobDismiss))
 	s.mux.HandleFunc("GET /jobs/{id}/log", s.auth(s.handleJobLog))
 	s.mux.HandleFunc("GET /audit", s.auth(s.handleAudit))
 	s.mux.HandleFunc("GET /keys", s.auth(s.handleSSHKeys))

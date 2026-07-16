@@ -18,6 +18,14 @@
 </form>
 {{end}}
 
+{{if .CanDismiss}}
+<form method="post" action="/jobs/{{$j.ID}}/dismiss" class="inline mt"
+      data-confirm="Dismiss this job? It stops counting toward 'needs attention'. Resolve or abort the related promotion separately.">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button>Dismiss</button>
+</form>
+{{end}}
+
 <h2>Log</h2>
 <pre id="joblog" data-job-id="{{$j.ID}}" {{if .Running}}data-poll="1"{{end}}>{{$j.Log}}</pre>
 {{template "foot" .}}
