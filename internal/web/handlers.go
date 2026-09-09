@@ -44,7 +44,7 @@ func (s *Server) bridgeFromPath(w http.ResponseWriter, r *http.Request) *store.B
 	return b
 }
 
-// liveOpenPRs fetches the bridge's open Gitea PRs, tolerating failure.
+// liveOpenPRs fetches the bridge's open forge PRs, tolerating failure.
 func (s *Server) liveOpenPRs(ctx context.Context, b *store.Bridge) ([]gitea.PR, error) {
 	_, token, err := s.Jobs.RuntimeBridge(b)
 	if err != nil {
@@ -54,6 +54,21 @@ func (s *Server) liveOpenPRs(ctx context.Context, b *store.Bridge) ([]gitea.PR, 
 	defer cancel()
 	api := s.Jobs.NewGitea(b.GiteaBaseURL, token)
 	return api.OpenPRs(cctx, b.GiteaOwner, b.GiteaRepo)
+}
+
+// liveOpenPRCount fetches just the count of open forge PRs. Unlike liveOpenPRs
+// it uses the issues endpoint, which doesn't compute ahead/behind per PR, so
+// the dashboard stays responsive even when a mirror has many open PRs on a
+// large repo (where the pulls list runs into the 8s deadline on Forgejo).
+func (s *Server) liveOpenPRCount(ctx context.Context, b *store.Bridge) (int, error) {
+	_, token, err := s.Jobs.RuntimeBridge(b)
+	if err != nil {
+		return 0, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	api := s.Jobs.NewGitea(b.GiteaBaseURL, token)
+	return api.OpenPRCount(cctx, b.GiteaOwner, b.GiteaRepo)
 }
 
 // ---------- dashboard ----------
@@ -76,10 +91,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for i, b := range bridges {
 		row := &bridgeRow{Bridge: b}
 		row.AwaitingMerge, row.NeedsAttention, _ = s.Store.DashboardCounts(b.ID)
-		if prs, err := s.liveOpenPRs(r.Context(), b); err != nil {
+		if n, err := s.liveOpenPRCount(r.Context(), b); err != nil {
 			row.OpenPRsErr = "API unreachable"
 		} else {
-			row.OpenPRs = len(prs)
+			row.OpenPRs = n
 		}
 		rows[i] = row
 	}
@@ -123,7 +138,7 @@ func (s *Server) parseBridgeForm(r *http.Request, b *store.Bridge) error {
 	b.ScheduleCron = strings.TrimSpace(r.PostFormValue("schedule_cron"))
 
 	if b.Name == "" || b.SourceRemoteURL == "" || b.GiteaBaseURL == "" || b.GiteaOwner == "" || b.GiteaRepo == "" {
-		return errors.New("name, source remote, Gitea base URL, owner and repo are required")
+		return errors.New("name, source remote, forge base URL, owner and repo are required")
 	}
 	if len(b.SyncBranches) == 0 {
 		return errors.New("at least one sync branch is required")
@@ -171,10 +186,10 @@ func (s *Server) applyGiteaTokenForm(r *http.Request, b *store.Bridge) error {
 	if sel := strings.TrimSpace(r.PostFormValue("gitea_token_id")); sel != "" {
 		id, err := strconv.ParseInt(sel, 10, 64)
 		if err != nil {
-			return errors.New("invalid Gitea token selection")
+			return errors.New("invalid forge token selection")
 		}
 		if _, err := s.Store.GiteaTokenByID(id); err != nil {
-			return errors.New("the selected Gitea token no longer exists")
+			return errors.New("the selected forge token no longer exists")
 		}
 		b.GiteaTokenID = &id
 		b.GiteaTokenEnc = nil
@@ -183,7 +198,7 @@ func (s *Server) applyGiteaTokenForm(r *http.Request, b *store.Bridge) error {
 	token := strings.TrimSpace(r.PostFormValue("gitea_token"))
 	if token == "" {
 		if b.GiteaTokenID == nil && len(b.GiteaTokenEnc) == 0 {
-			return errors.New("a Gitea API token is required: select a saved token or paste a new one")
+			return errors.New("a forge API token is required: select a saved token or paste a new one")
 		}
 		return nil // keep the bridge's current token
 	}
@@ -197,7 +212,7 @@ func (s *Server) applyGiteaTokenForm(r *http.Request, b *store.Bridge) error {
 	}
 	t := &store.GiteaToken{Name: name, TokenEnc: enc}
 	if err := s.Store.CreateGiteaToken(t); err != nil {
-		return errors.New("could not save the new Gitea token (name already taken?): " + err.Error())
+		return errors.New("could not save the new forge token (name already taken?): " + err.Error())
 	}
 	s.Store.Audit(b.ID, "admin", "gitea_token_created", map[string]any{"name": name})
 	b.GiteaTokenID = &t.ID
@@ -301,7 +316,25 @@ func (s *Server) handleBridgeSettingsForm(w http.ResponseWriter, r *http.Request
 	s.renderPage(w, r, "bridge_settings.html", map[string]any{
 		"Bridge": b, "WebhookSecret": webhookSecret, "Error": "",
 		"SSHKeys": s.sshKeysOrNil(), "GiteaTokens": s.giteaTokensOrNil(),
+		"ForgeVersion": s.forgeVersion(r.Context(), b),
 	})
+}
+
+// forgeVersion reports the mirror's forge version for display (e.g. Gitea
+// 1.26.1 or Forgejo 15.0.7+gitea-1.22.0). Best-effort and behaviour-neutral:
+// on any error it returns "" and the settings page simply omits the line.
+func (s *Server) forgeVersion(ctx context.Context, b *store.Bridge) string {
+	_, token, err := s.Jobs.RuntimeBridge(b)
+	if err != nil {
+		return ""
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	v, err := s.Jobs.NewGitea(b.GiteaBaseURL, token).Version(cctx)
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 func (s *Server) handleBridgeSettings(w http.ResponseWriter, r *http.Request) {

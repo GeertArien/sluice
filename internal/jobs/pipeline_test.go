@@ -29,7 +29,11 @@ func (f *fakeGitea) CheckToken(ctx context.Context) error { return nil }
 func (f *fakeGitea) OpenPRs(ctx context.Context, owner, repo string) ([]gitea.PR, error) {
 	return f.prs, nil
 }
-func (f *fakeGitea) FindOpenPRByHead(ctx context.Context, owner, repo, branch string) (*gitea.PR, error) {
+func (f *fakeGitea) OpenPRCount(ctx context.Context, owner, repo string) (int, error) {
+	return len(f.prs), nil
+}
+func (f *fakeGitea) Version(ctx context.Context) (string, error) { return "test-forge", nil }
+func (f *fakeGitea) FindOpenPRByHead(ctx context.Context, owner, repo, base, branch string) (*gitea.PR, error) {
 	for i := range f.prs {
 		if f.prs[i].Head.Ref == branch {
 			return &f.prs[i], nil
