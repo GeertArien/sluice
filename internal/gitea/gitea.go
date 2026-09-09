@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -118,18 +119,121 @@ func (c *Client) OpenPRs(ctx context.Context, owner, repo string) ([]PR, error) 
 	return prs, err
 }
 
-// FindOpenPRByHead returns the open PR whose head branch matches, or nil.
-func (c *Client) FindOpenPRByHead(ctx context.Context, owner, repo, branch string) (*PR, error) {
-	prs, err := c.OpenPRs(ctx, owner, repo)
+// OpenPRCount returns the number of open pull requests. It uses the issues
+// endpoint with type=pulls, which — unlike the pulls list — does not compute
+// ahead/behind per PR, so it stays fast on large repos with many open PRs
+// (the pulls list is O(n) git rev-list calls on Forgejo). It reads the
+// X-Total-Count header, falling back to counting the returned page.
+func (c *Client) OpenPRCount(ctx context.Context, owner, repo string) (int, error) {
+	path := fmt.Sprintf("/repos/%s/%s/issues?state=open&type=pulls&limit=50",
+		url.PathEscape(owner), url.PathEscape(repo))
+	req, err := http.NewRequestWithContext(ctx, "GET", c.BaseURL+"/api/v1"+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "token "+c.Token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(data)))
+	}
+	if tc := strings.TrimSpace(resp.Header.Get("X-Total-Count")); tc != "" {
+		if n, err := strconv.Atoi(tc); err == nil {
+			return n, nil
+		}
+	}
+	var items []json.RawMessage
+	_ = json.Unmarshal(data, &items)
+	return len(items), nil
+}
+
+// Version returns the forge's reported version string (e.g. "1.26.1" for Gitea
+// or "15.0.7+gitea-1.22.0" for Forgejo). Display only — behaviour never branches
+// on it, since both speak the same Gitea-compatible API.
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := c.do(ctx, "GET", "/version", nil, &v); err != nil {
+		return "", err
+	}
+	return v.Version, nil
+}
+
+// FindOpenPRByHead returns the open PR whose head branch matches, or nil. When
+// the base branch is known and neither ref contains a slash, it uses the direct
+// GET /pulls/{base}/{head} lookup (one cheap request); otherwise it pages the
+// open-PR list until a match or exhaustion, so mirrors with >50 open PRs don't
+// silently lose matches (the fixed limit=50 list would).
+func (c *Client) FindOpenPRByHead(ctx context.Context, owner, repo, base, branch string) (*PR, error) {
+	if base != "" && !strings.Contains(base, "/") && !strings.Contains(branch, "/") {
+		pr, err := c.pullByBaseHead(ctx, owner, repo, base, branch)
+		if err != nil {
+			return nil, err
+		}
+		// The base/head pair is authoritative: a closed hit or a 404 both mean
+		// there is no open PR for this promotion's base and head.
+		if pr != nil && pr.State == "open" {
+			return pr, nil
+		}
+		return nil, nil
+	}
+	return c.findOpenPRByHeadPaged(ctx, owner, repo, branch)
+}
+
+// pullByBaseHead fetches the single PR for a base/head pair, returning nil on
+// 404 (no such PR) rather than an error.
+func (c *Client) pullByBaseHead(ctx context.Context, owner, repo, base, head string) (*PR, error) {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%s/%s",
+		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(base), url.PathEscape(head))
+	req, err := http.NewRequestWithContext(ctx, "GET", c.BaseURL+"/api/v1"+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	for i := range prs {
-		if prs[i].Head.Ref == branch {
-			return &prs[i], nil
+	req.Header.Set("Authorization", "token "+c.Token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("gitea GET %s: %s: %s", path, resp.Status, strings.TrimSpace(string(data)))
+	}
+	var pr PR
+	if err := json.Unmarshal(data, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+// findOpenPRByHeadPaged scans the open-PR list page by page until it finds a
+// matching head or runs out, instead of a fixed limit=50.
+func (c *Client) findOpenPRByHeadPaged(ctx context.Context, owner, repo, branch string) (*PR, error) {
+	const perPage = 50
+	for page := 1; ; page++ {
+		var prs []PR
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&limit=%d&page=%d",
+			url.PathEscape(owner), url.PathEscape(repo), perPage, page)
+		if err := c.do(ctx, "GET", path, nil, &prs); err != nil {
+			return nil, err
+		}
+		for i := range prs {
+			if prs[i].Head.Ref == branch {
+				return &prs[i], nil
+			}
+		}
+		if len(prs) < perPage {
+			return nil, nil
 		}
 	}
-	return nil, nil
 }
 
 func (c *Client) ClosePR(ctx context.Context, owner, repo string, index int64) error {

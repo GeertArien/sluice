@@ -36,7 +36,9 @@ func (stubGitea) OpenPRs(ctx context.Context, o, r string) ([]gitea.PR, error) {
 	pr.User.Login = "agent"
 	return []gitea.PR{pr}, nil
 }
-func (stubGitea) FindOpenPRByHead(ctx context.Context, o, r, b string) (*gitea.PR, error) {
+func (stubGitea) OpenPRCount(ctx context.Context, o, r string) (int, error) { return 1, nil }
+func (stubGitea) Version(ctx context.Context) (string, error)               { return "stub-forge 1.0", nil }
+func (stubGitea) FindOpenPRByHead(ctx context.Context, o, r, base, b string) (*gitea.PR, error) {
 	return nil, nil
 }
 func (stubGitea) ClosePR(ctx context.Context, o, r string, i int64) error               { return nil }
@@ -453,7 +455,7 @@ func TestBridgeCreateRequiresAToken(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "Gitea API token is required") {
+	if !strings.Contains(string(body), "forge API token is required") {
 		t.Fatalf("expected a token-required error, got:\n%s", body)
 	}
 }

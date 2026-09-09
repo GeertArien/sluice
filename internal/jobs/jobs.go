@@ -35,10 +35,12 @@ type GiteaAPI interface {
 	EnsureRepo(ctx context.Context, owner, repo string) (*gitea.Repo, error)
 	CheckToken(ctx context.Context) error
 	OpenPRs(ctx context.Context, owner, repo string) ([]gitea.PR, error)
-	FindOpenPRByHead(ctx context.Context, owner, repo, branch string) (*gitea.PR, error)
+	OpenPRCount(ctx context.Context, owner, repo string) (int, error)
+	FindOpenPRByHead(ctx context.Context, owner, repo, base, branch string) (*gitea.PR, error)
 	ClosePR(ctx context.Context, owner, repo string, index int64) error
 	CommentOnPR(ctx context.Context, owner, repo string, index int64, body string) error
 	DeleteBranch(ctx context.Context, owner, repo, branch string) error
+	Version(ctx context.Context) (string, error)
 }
 
 type Service struct {
@@ -256,7 +258,7 @@ func (s *Service) giteaToken(b *store.Bridge) (string, error) {
 	if b.GiteaTokenID != nil {
 		t, err := s.Store.GiteaTokenByID(*b.GiteaTokenID)
 		if err != nil {
-			return "", fmt.Errorf("bridge references a missing Gitea token: %w", err)
+			return "", fmt.Errorf("bridge references a missing forge token: %w", err)
 		}
 		token, err := s.Box.Decrypt(t.TokenEnc)
 		if err != nil {
@@ -434,7 +436,7 @@ func (s *Service) runInit(ctx context.Context, bridge *store.Bridge, rb *engine.
 	if _, err := eng.Runner.Run(ctx, "", "git", "ls-remote", "--heads", "--", bridge.SourceRemoteURL); err != nil {
 		return fmt.Errorf("source remote not reachable: %w", err)
 	}
-	log("== init: ensuring Gitea repo exists ==")
+	log("== init: ensuring forge repo exists ==")
 	repo, err := api.EnsureRepo(ctx, bridge.GiteaOwner, bridge.GiteaRepo)
 	if err != nil {
 		return err
@@ -499,9 +501,10 @@ func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engi
 		target = branch
 	}
 	// Find the matching open PR (nullable: branch-only promotions are allowed).
+	// The base is known here, so this uses the direct base/head lookup.
 	var prNumber *int64
-	if pr, err := api.FindOpenPRByHead(ctx, bridge.GiteaOwner, bridge.GiteaRepo, branch); err != nil {
-		logSink("note: could not query Gitea PRs (continuing branch-only): " + err.Error())
+	if pr, err := api.FindOpenPRByHead(ctx, bridge.GiteaOwner, bridge.GiteaRepo, base, branch); err != nil {
+		logSink("note: could not query forge PRs (continuing branch-only): " + err.Error())
 	} else if pr != nil {
 		prNumber = &pr.Number
 	}
@@ -558,7 +561,7 @@ func (s *Service) runPromote(ctx context.Context, bridge *store.Bridge, rb *engi
 			"This PR will be closed automatically once the change lands upstream.",
 			res.RealBranch, res.NumCommits, res.TipSHA[:12])
 		if err := api.CommentOnPR(ctx, bridge.GiteaOwner, bridge.GiteaRepo, *prNumber, msg); err != nil {
-			logSink("note: failed to comment on Gitea PR: " + err.Error())
+			logSink("note: failed to comment on forge PR: " + err.Error())
 		}
 	}
 	if cu := CompareURL(bridge.SourceRemoteURL, base, res.RealBranch); cu != "" {

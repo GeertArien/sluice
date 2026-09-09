@@ -12,12 +12,13 @@
   <fieldset><legend>Source repository</legend>
     <label>Source remote URL <input name="source_remote_url" value="{{$b.SourceRemoteURL}}" required></label>
   </fieldset>
-  <fieldset><legend>Gitea mirror</legend>
-    <label>Gitea base URL <input name="gitea_base_url" value="{{$b.GiteaBaseURL}}" required></label>
+  <fieldset><legend>Forge mirror (Gitea or Forgejo)</legend>
+    {{if .ForgeVersion}}<p class="muted">Detected forge: <code>{{.ForgeVersion}}</code></p>{{end}}
+    <label>Forge base URL <input name="gitea_base_url" value="{{$b.GiteaBaseURL}}" required></label>
     <label>Owner <input name="gitea_owner" value="{{$b.GiteaOwner}}" required></label>
     <label>Repository <input name="gitea_repo" value="{{$b.GiteaRepo}}" required></label>
-    <label>Gitea SSH URL <input name="gitea_ssh_url" value="{{$b.GiteaSSHURL}}"></label>
-    <label>Gitea API token
+    <label>Forge SSH URL <input name="gitea_ssh_url" value="{{$b.GiteaSSHURL}}" placeholder="add :PORT for a non-22 SSH port"></label>
+    <label>Forge API token
       <select name="gitea_token_id">
         <option value="">➕ Add a new token below</option>
         {{range .GiteaTokens}}<option value="{{.ID}}" {{if and $b.GiteaTokenID (eq .ID (deref_i $b.GiteaTokenID))}}selected{{end}}>{{.Name}}</option>{{end}}

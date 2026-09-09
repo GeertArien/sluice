@@ -1,10 +1,10 @@
 {{template "head" .}}
 <div class="pagehead">
-  <h1>Gitea API tokens</h1>
+  <h1>Forge API tokens</h1>
 </div>
-<p class="muted">Named Gitea API tokens you can reuse across bridges instead of pasting one per
-bridge. The token value is stored encrypted at rest and never shown again after it is saved;
-select it by name when creating or editing a bridge.</p>
+<p class="muted">Named forge API tokens (Gitea or Forgejo) you can reuse across bridges instead
+of pasting one per bridge. The token value is stored encrypted at rest and never shown again
+after it is saved; select it by name when creating or editing a bridge.</p>
 
 {{if .Error}}<div class="banner banner-red">{{.Error}}</div>{{end}}
 
@@ -21,7 +21,7 @@ select it by name when creating or editing a bridge.</p>
     <td>
       {{if not .Users}}
       <form method="post" action="/tokens/{{.Token.ID}}/delete" class="inline"
-            data-confirm="Delete Gitea token '{{.Token.Name}}'? This cannot be undone.">
+            data-confirm="Delete forge token '{{.Token.Name}}'? This cannot be undone.">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
         <button class="dangerbtn">Delete</button>
       </form>
@@ -36,8 +36,8 @@ select it by name when creating or editing a bridge.</p>
   <h2>Add a token</h2>
   <form method="post" action="/tokens" class="stack">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Name <input name="name" placeholder="e.g. gitea-ci" required></label>
-    <label>Token <input type="password" name="token" placeholder="Gitea API token" required>
+    <label>Name <input name="name" placeholder="e.g. forge-ci" required></label>
+    <label>Token <input type="password" name="token" placeholder="Gitea/Forgejo API token" required>
       <small>stored encrypted; never written to logs and never shown again</small></label>
     <button type="submit">Add token</button>
   </form>
