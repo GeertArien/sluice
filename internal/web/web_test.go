@@ -161,7 +161,7 @@ func TestPagesRenderAndAuthIsEnforced(t *testing.T) {
 	st.Audit(b.ID, "admin", "test_entry", map[string]string{"k": "v"})
 
 	pages := []string{"/", "/bridges/new", "/bridges/demo", "/bridges/demo/settings",
-		"/audit", "/audit?bridge=demo&action=test_entry", "/jobs/1",
+		"/bridges/demo/prs", "/audit", "/audit?bridge=demo&action=test_entry", "/jobs/1",
 		// No gitea-clone exists in the temp workdir, so this exercises the
 		// preflight template's error branch.
 		"/bridges/demo/preflight?branch=feat&base=main"}
@@ -170,6 +170,14 @@ func TestPagesRenderAndAuthIsEnforced(t *testing.T) {
 		if code != 200 {
 			t.Errorf("GET %s = %d:\n%s", p, code, body)
 		}
+	}
+	// The lazily-loaded PR fragment renders the open PRs from the forge.
+	if _, prBody := get(t, client, ts.URL+"/bridges/demo/prs"); !strings.Contains(prBody, "Add feature") || !strings.Contains(prBody, "feat") {
+		t.Errorf("PR fragment missing the open PR:\n%s", prBody)
+	}
+	// The bridge page itself must not block on the PR list; it defers to /prs.
+	if _, bp := get(t, client, ts.URL+"/bridges/demo"); !strings.Contains(bp, `data-prs-url="/bridges/demo/prs"`) {
+		t.Error("bridge page missing the lazy PR-list container")
 	}
 	// Settings page must show the webhook secret, never the token.
 	_, body := get(t, client, ts.URL+"/bridges/demo/settings")

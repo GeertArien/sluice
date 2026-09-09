@@ -57,24 +57,10 @@
 </section>
 
 <section id="prs">
-  <h2>Agent PRs <span class="muted">(live from Gitea)</span></h2>
-  {{if .PRErr}}<div class="banner banner-yellow">Could not reach the Gitea API: {{.PRErr}}</div>{{end}}
-  {{if not .PRs}}<div class="empty">No open pull requests on the mirror.</div>
-  {{else}}
-  <table>
-    <tr><th>#</th><th>title</th><th>author</th><th>head &rarr; base</th><th>mergeable</th><th></th></tr>
-    {{range .PRs}}
-    <tr>
-      <td><a href="{{.HTMLURL}}">#{{.Number}}</a></td>
-      <td>{{.Title}}</td>
-      <td>{{.User.Login}}</td>
-      <td><code>{{.Head.Ref}}</code> &rarr; <code>{{.Base.Ref}}</code></td>
-      <td>{{if .Mergeable}}yes{{else}}<span class="badge badge-failed">no</span>{{end}}</td>
-      <td><a class="btn" href="/bridges/{{$b.Slug}}/preflight?branch={{.Head.Ref}}&base={{.Base.Ref}}">Pre-flight / Promote</a></td>
-    </tr>
-    {{end}}
-  </table>
-  {{end}}
+  <h2>Agent PRs <span class="muted">(live from the forge)</span></h2>
+  <div id="agentprs" data-prs-url="/bridges/{{$b.Slug}}/prs">
+    <div class="empty">Loading open pull requests…</div>
+  </div>
   <details class="mt">
     <summary>Promote a branch without a PR</summary>
     <form method="get" action="/bridges/{{$b.Slug}}/preflight" class="inline-form">

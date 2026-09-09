@@ -55,6 +55,21 @@ document.addEventListener("submit", (e) => {
   if (form && !window.confirm(form.dataset.confirm)) e.preventDefault();
 });
 
+// Lazy-load the live Agent-PR list so a slow forge API never blocks the
+// bridge page (the pulls endpoint computes ahead/behind per PR).
+const prsEl = document.getElementById("agentprs");
+if (prsEl && prsEl.dataset.prsUrl) {
+  fetch(prsEl.dataset.prsUrl, { cache: "no-store" })
+    .then((r) => r.text())
+    .then((html) => {
+      prsEl.innerHTML = html;
+    })
+    .catch(() => {
+      prsEl.innerHTML =
+        '<div class="banner banner-yellow">Could not load open pull requests.</div>';
+    });
+}
+
 // Live job log polling (spec §5.6).
 const logEl = document.getElementById("joblog");
 if (logEl && logEl.dataset.poll === "1") {
