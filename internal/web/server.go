@@ -101,6 +101,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /bridges/new", s.auth(s.handleBridgeNewForm))
 	s.mux.HandleFunc("POST /bridges", s.auth(s.handleBridgeCreate))
 	s.mux.HandleFunc("GET /bridges/{slug}", s.auth(s.handleBridgeDetail))
+	s.mux.HandleFunc("GET /bridges/{slug}/prs", s.auth(s.handleBridgePRs))
 	s.mux.HandleFunc("GET /bridges/{slug}/settings", s.auth(s.handleBridgeSettingsForm))
 	s.mux.HandleFunc("POST /bridges/{slug}/settings", s.auth(s.handleBridgeSettings))
 	s.mux.HandleFunc("POST /bridges/{slug}/delete", s.auth(s.handleBridgeDelete))

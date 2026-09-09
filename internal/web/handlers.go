@@ -44,13 +44,15 @@ func (s *Server) bridgeFromPath(w http.ResponseWriter, r *http.Request) *store.B
 	return b
 }
 
-// liveOpenPRs fetches the bridge's open forge PRs, tolerating failure.
-func (s *Server) liveOpenPRs(ctx context.Context, b *store.Bridge) ([]gitea.PR, error) {
+// liveOpenPRs fetches the bridge's open forge PRs, tolerating failure. The
+// caller sets the deadline: the lazily-loaded bridge-page fragment can afford a
+// long one; anything on a page's critical path should not.
+func (s *Server) liveOpenPRs(ctx context.Context, b *store.Bridge, timeout time.Duration) ([]gitea.PR, error) {
 	_, token, err := s.Jobs.RuntimeBridge(b)
 	if err != nil {
 		return nil, err
 	}
-	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	api := s.Jobs.NewGitea(b.GiteaBaseURL, token)
 	return api.OpenPRs(cctx, b.GiteaOwner, b.GiteaRepo)
@@ -281,11 +283,9 @@ func (s *Server) handleBridgeDetail(w http.ResponseWriter, r *http.Request) {
 	jobsList, _ := s.Store.JobsForBridge(b.ID, 30)
 	promotions, _ := s.Store.PromotionsForBridge(b.ID)
 	attention, _ := s.Store.JobsNeedingAttention(b.ID)
-	prs, prErr := s.liveOpenPRs(r.Context(), b)
-	prErrMsg := ""
-	if prErr != nil {
-		prErrMsg = prErr.Error()
-	}
+	// The open-PR list is loaded lazily (see handleBridgePRs): the forge's
+	// pulls endpoint computes ahead/behind per PR and can take many seconds on
+	// a large repo, so fetching it here would block the whole page.
 	defaultBase := ""
 	if len(b.SyncBranches) > 0 {
 		defaultBase = b.SyncBranches[0]
@@ -296,10 +296,28 @@ func (s *Server) handleBridgeDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderPage(w, r, "bridge.html", map[string]any{
 		"Bridge": b, "Jobs": jobsList, "Promotions": promotions,
-		"Attention": attention, "PRs": prs, "PRErr": prErrMsg,
+		"Attention":   attention,
 		"DefaultBase": defaultBase, "Tab": r.URL.Query().Get("tab"),
 		"SSHKey": sshKey,
 	})
+}
+
+// handleBridgePRs renders just the open-PR table fragment, loaded lazily by the
+// bridge page. It uses a generous deadline because the forge's pulls list is
+// slow on large repos (ahead/behind per PR); it's a single bridge, so the wait
+// is acceptable and it never blocks the rest of the page.
+func (s *Server) handleBridgePRs(w http.ResponseWriter, r *http.Request) {
+	b := s.bridgeFromPath(w, r)
+	if b == nil {
+		return
+	}
+	data := map[string]any{"Bridge": b}
+	if prs, err := s.liveOpenPRs(r.Context(), b, 25*time.Second); err != nil {
+		data["PRErr"] = err.Error()
+	} else {
+		data["PRs"] = prs
+	}
+	s.render(w, "prs_fragment", data)
 }
 
 // ---------- settings (spec §5.1 filter-change flow) ----------

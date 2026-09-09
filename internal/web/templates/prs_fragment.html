@@ -1,0 +1,20 @@
+{{define "prs_fragment"}}
+{{$b := .Bridge}}
+{{if .PRErr}}<div class="banner banner-yellow">Could not reach the forge API: {{.PRErr}}</div>{{end}}
+{{if not .PRs}}<div class="empty">No open pull requests on the mirror.</div>
+{{else}}
+<table>
+  <tr><th>#</th><th>title</th><th>author</th><th>head &rarr; base</th><th>mergeable</th><th></th></tr>
+  {{range .PRs}}
+  <tr>
+    <td><a href="{{.HTMLURL}}">#{{.Number}}</a></td>
+    <td>{{.Title}}</td>
+    <td>{{.User.Login}}</td>
+    <td><code>{{.Head.Ref}}</code> &rarr; <code>{{.Base.Ref}}</code></td>
+    <td>{{if .Mergeable}}yes{{else}}<span class="badge badge-failed">no</span>{{end}}</td>
+    <td><a class="btn" href="/bridges/{{$b.Slug}}/preflight?branch={{.Head.Ref}}&base={{.Base.Ref}}">Pre-flight / Promote</a></td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+{{end}}
