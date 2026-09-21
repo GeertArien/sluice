@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/geertarien/sluice/internal/jobs"
+	"github.com/geertarien/sluice/internal/reaper"
 	"github.com/geertarien/sluice/internal/secrets"
 	"github.com/geertarien/sluice/internal/store"
 	"github.com/geertarien/sluice/internal/web"
@@ -121,6 +122,13 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if os.Getpid() == 1 {
+		// No init in front of us: orphaned processes (git's background gc,
+		// helpers of a killed git) get reparented here and must be reaped or
+		// they accumulate as zombies until the container's pids limit is hit.
+		log.Printf("running as PID 1 without an init: reaping orphaned processes (prefer tini or docker run --init)")
+		reaper.Start(ctx, 10*time.Second, log.Printf)
+	}
 	svc.Start(ctx)
 
 	addr := env("SLUICE_LISTEN", ":8080")
