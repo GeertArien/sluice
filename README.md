@@ -112,6 +112,29 @@ specific account (unraid's appdata share is `nobody:users` = `99:100`), set
 yourself (`docker run --user 99:100`), the entrypoint skips the remap and you
 are responsible for the mounted data dir being writable by that user.
 
+### PID 1 and orphaned git processes
+
+The image runs `tini` as PID 1. This matters: git forks its automatic
+maintenance (`gc --auto`) into the background and lets the parent exit, and
+helpers such as `ssh` or `upload-pack` can outlive a git that was killed on
+timeout. Those processes get reparented to PID 1 and must be waited on there.
+A container whose PID 1 is the `sluice` binary itself never did that, so every
+such process stayed a zombie: invisible to `docker top` and to memory stats,
+but each holding one slot of the container's `--pids-limit` (2048 by default)
+until, after a couple of weeks of syncs, `fork()` failed with
+`Resource temporarily unavailable` and every job died.
+
+Sluice now defends against this on three levels: every git invocation runs
+with `gc.autoDetach=false` (maintenance runs inside the job that triggered
+it, and is logged there), a timed-out command takes its whole process group
+with it, and the binary reaps orphans itself when it detects it is PID 1.
+If you run the binary outside this image, put an init in front of it
+(`docker run --init`, or `tini`) rather than relying on that last fallback.
+
+If an existing container is already wedged at its pids limit, the zombies
+belong to the old PID 1 and only go away with the container: pull the new
+image and recreate it once.
+
 ## Configuration
 
 | Variable | Default | Purpose |

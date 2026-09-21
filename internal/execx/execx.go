@@ -2,6 +2,20 @@
 // argv arrays (never a shell string), run with a timeout, and have their
 // combined output captured through a scrubber that removes secret material
 // before it can reach a job log.
+//
+// Two process-hygiene rules live here because every git invocation goes
+// through this package:
+//
+//   - Each command runs in its own process group and the whole group is
+//     killed on timeout/cancel, so a killed git cannot leave ssh,
+//     upload-pack or gc helpers behind as orphans.
+//   - git's automatic maintenance is forced to run in the foreground
+//     (gc.autoDetach / maintenance.autoDetach = false). By default git forks
+//     `gc --auto` into the background and lets the parent exit, which
+//     reparents the gc process to PID 1. Inside a container where Sluice is
+//     PID 1 nobody waits on it, and every such gc stays a zombie forever —
+//     each holding a slot against the container's pids limit until fork()
+//     fails with EAGAIN.
 package execx
 
 import (
@@ -9,13 +23,31 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/geertarien/sluice/internal/reaper"
 )
 
 // DefaultTimeout bounds a single git/filter-repo invocation. First syncs of
 // large repos can be slow, so this is generous; callers can override.
 const DefaultTimeout = 30 * time.Minute
+
+// waitDelay is how long Wait keeps waiting for the output pipes to close
+// after the process group has been killed. It only matters if some helper
+// escaped the group (e.g. by calling setsid) while still holding our pipes.
+const waitDelay = 5 * time.Second
+
+// gitConfig is injected into the environment of every command (git reads
+// GIT_CONFIG_COUNT/KEY_n/VALUE_n since 2.31; other programs ignore it, and
+// git-filter-repo's git subprocesses inherit it).
+var gitConfig = [][2]string{
+	{"gc.autoDetach", "false"},
+	// git >= 2.47 routes auto maintenance through `git maintenance run --auto`,
+	// whose detach setting falls back to gc.autoDetach; set it explicitly too.
+	{"maintenance.autoDetach", "false"},
+}
 
 // Runner executes commands with a fixed environment and log sink.
 type Runner struct {
@@ -66,15 +98,22 @@ func (r *Runner) Run(ctx context.Context, dir, name string, args ...string) (str
 
 	cmd := exec.CommandContext(cctx, name, args...)
 	cmd.Dir = dir
-	if len(r.Env) > 0 {
-		cmd.Env = append(cmd.Environ(), r.Env...)
-	}
+	cmd.Env = withGitConfig(append(cmd.Environ(), r.Env...), gitConfig)
+	cmd.WaitDelay = waitDelay
+	setProcessGroup(cmd)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
 	r.logf("$ %s %s", name, strings.Join(args, " "))
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		// While we own this child, the orphan reaper must leave it alone:
+		// cmd.Wait is the one that reaps it.
+		release := reaper.Hold(cmd.Process.Pid)
+		err = cmd.Wait()
+		release()
+	}
 	out := r.Scrub(buf.String())
 	if out != "" {
 		r.logf("%s", strings.TrimRight(out, "\n"))
@@ -86,6 +125,27 @@ func (r *Runner) Run(ctx context.Context, dir, name string, args ...string) (str
 		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// withGitConfig appends key/value pairs as GIT_CONFIG_* entries, continuing
+// any GIT_CONFIG_COUNT sequence already present in env (last value wins, as
+// with os/exec's duplicate-key handling).
+func withGitConfig(env []string, kv [][2]string) []string {
+	n := 0
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "GIT_CONFIG_COUNT="); ok {
+			if c, err := strconv.Atoi(v); err == nil && c >= 0 {
+				n = c
+			}
+		}
+	}
+	for _, p := range kv {
+		env = append(env,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", n, p[0]),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n, p[1]))
+		n++
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", n))
 }
 
 // RunEnv is Run with extra per-call environment variables (used to pass

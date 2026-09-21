@@ -139,6 +139,11 @@ unfiltered can reach the mirror.
 - Every git command runs as an **argv array** (no shell interpolation), with
   a timeout, and its output is appended to the job log after **secret
   scrubbing** (Gitea token, webhook secret, SSH key material are redacted).
+- Every git command runs in its **own process group**, which is killed as a
+  whole on timeout, and with **`gc.autoDetach=false`**, so git's automatic
+  maintenance runs (and is logged) inside the job instead of being forked
+  into the background where it would be orphaned to PID 1. See the README's
+  "PID 1 and orphaned git processes" for why this matters in a container.
 - SSH uses the bridge's key (or the mounted default) and the managed,
   **pinned** `known_hosts`; host keys are never auto-accepted.
 - On success the bridge's "last sync" timestamp/result is recorded and an
